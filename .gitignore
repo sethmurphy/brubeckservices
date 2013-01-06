@@ -11,3 +11,4 @@ dist
 *.pid
 .*.swp
 .*.swo
+*.egg-info
