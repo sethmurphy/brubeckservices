@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Success{% endblock %}
+{% block body %}
+<p>Choose a slow service request type:<br /><br />
+<a href="/service/async">asynchronous</a><br />
+or<br />
+<a href="/service/sync">synchronous</a><br />
+<p>{{ name }}</p>
+{% endblock %}
+

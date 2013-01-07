@@ -24,17 +24,26 @@ from dictshield.fields import (StringField,
                                EmailField,
                                LongField,
                                DictField,
-                               IntField)
+                               IntField,
+)
 from uuid import uuid4
-from brubeck.resource import Resource
+from resource import (
+    Resource,
+    assure_resource,
+    is_resource_registered,
+    register_resource,
+    unregister_resource,
+    get_resource,
+)
 from brubeck.connections import (load_zmq, load_zmq_ctx)
 
 ### Attempt to setup gevent wrappers for sleep and events
 if CORO_LIBRARY == 'gevent':
     from gevent.event import AsyncResult
+    from gevent import sleep
 
     def coro_sleep(secs):
-        gevent.sleep(secs)
+        sleep(secs)
 
     def coro_get_event():
         return AsyncResult()
@@ -48,9 +57,10 @@ if CORO_LIBRARY == 'gevent':
 ### Fallback to eventlet
 elif CORO_LIBRARY == 'eventlet':
     from eventlet import event
+    from eventlet import sleep
 
     def coro_sleep(secs):
-        eventlet.sleep(secs)
+        sleep(secs)
 
     def coro_get_event():
         return Event()
@@ -65,67 +75,7 @@ SERVICE_METHODS = ['get', 'post', 'put', 'delete',
                    'options', 'connect', 'response', 'request']
 _DEFAULT_SERVICE_REQUEST_METHOD = 'request'
 _DEFAULT_SERVICE_RESPONSE_METHOD = 'response'
-
-##########################################################################
-## Deal with registering/deregistering resources at the application level
-## An example of a resource would be a service (see service.py)
-## These were written to be part of the application (Brubeck),
-## but have been refactored to be included only with Brubeck Services 
-## so services have no affect on the core Brubeck code
-##########################################################################
-
-# Used to hold our resources for the life of the application
-_resources = []
-
-def registered_resources():
-    """Access to our registered resources.""" 
-    return _resources
-
-def is_resource_registered(key):
-    """ Check if a resource is registered.""" 
-    if key in _resources:
-        return True
-    else:
-        return False
-
-def register_resource(resource):
-    """ Store (register) a resource and call our on_register hook.
-    """
-    key = resource.key()
-    if key not in _resources:
-        # add us to the list
-        _resources[key] = resource
-        resource._on_register()
-        logging.debug("register_resource success: %s" % resource.name)
-    else:
-        logging.debug("register_resource ignored: %s already registered" % 
-            resource.name)
-    return True
-
-def unregister_resource(key):
-    """ Call our on_unregister hook and delete from list.
-    """ 
-    if key not in _resources:
-        logging.debug("unregister_resource ignored: %s not registered" % key)
-        return False
-    else:
-        resource = _resources[key]
-        resource._on_unregistered()
-        logging.debug("unregister_resource success: %s" % service_addr)
-
-        resource._on_unregister()
-        del _resources[key]
-
-        return True
-
-def get_resource(key):
-    """ Check if key is a resource that is registered
-    and return resource if found, None if not found.
-    """ 
-    if key in _resources:
-        return _resources[key]
-    else:
-        return None
+_SERVICE_RESOURCE_TYPE = 'SERVICE'
             
 #################################
 ## Request and Response stuff 
@@ -355,6 +305,9 @@ class ServiceConnection(Mongrel2Connection):
     
         The application is responsible for handling misconfigured routes.
         """
+        
+        # see if we have initialize _resource attribute on application
+        assure_resource(application)
 
         service_request = parse_service_request(message, application.msg_conn.passphrase)
 
@@ -453,7 +406,7 @@ class ServiceClientConnection(ServiceConnection):
         out_sock.setsockopt(zmq.IDENTITY, self.sender_id)
         out_sock.connect(svc_addr)
 
-        super(ZMQConnection, self).__init__(in_sock, out_sock)
+        Connection.__init__(self, in_sock, out_sock)
 
         self.in_addr = svc_addr
         self.out_addr = svc_addr
@@ -624,8 +577,6 @@ class ServiceClientMixin(object):
         self.application
     """
 
-    _RESOURCE_TYPE = "service"
-
     @property
     def zmq(self):
         if not hasattr(self, '_zmq'):
@@ -705,19 +656,23 @@ class ServiceClientMixin(object):
         return ServiceRequest(**data)
 
     def service_is_registered(self, name, type=None):
-        """Create our key and check if a resource is registered""" 
-        return is_resource_registered(Resource.create_key(name))
+        """Create our key and check if a resource is registered"""
+
+        # see if we have initialize _resource attribute on application
+        assure_resource(self.application)
+
+        return is_resource_registered(Resource.create_key(name, _SERVICE_RESOURCE_TYPE))
 
     def register_service(self, service_addr, service_passphrase):
         """just a wrapper for our application level register_service method right now"""
-        key = Resource.create_key(service_addr)
+        key = Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)
         if not self.service_is_registered(key):
             service_conn = ServiceClientConnection(
                 service_addr, service_passphrase
             )
             resource = Resource(**{
                 "name": service_addr,
-                "resource_type": ServiceClientMixin._RESOURCE_TYPE,
+                "resource_type": _SERVICE_RESOURCE_TYPE,
                 "resource": {
                     "service_conn": service_conn,
                     "waiting_clients": {},
@@ -797,8 +752,9 @@ class ServiceClientMixin(object):
     
     def register_service(self, service_addr, service_passphrase):
         """ Create and store a connection and it's listener and waiting_clients queue.
-        """ 
-        key = Resource.create_key(service_addr)
+        """
+        assure_resource(self.application)
+        key = Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)        
         if not is_resource_registered(key):
             # create our service connection
             logging.debug("register_service creating service_conn: %s" % service_addr)
@@ -822,8 +778,9 @@ class ServiceClientMixin(object):
     def unregister_service(self, service_addr):
         """ Create and store a connection and it's listener and waiting_clients queue.
         To be safe, for now there is no unregister.
-        """ 
-        key = Resource.create_key(service_addr)
+        """
+        assure_resource(self.application)
+        key = Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)
         if not is_resource_registered(key):
             logging.debug("unregister_service ignored: %s not registered" % service_addr)
             return False
@@ -847,7 +804,8 @@ class ServiceClientMixin(object):
             return True
     
     def get_service_info(self, service_addr):
-        key = Resource.create_key(service_addr)
+        assure_resource(self.application)
+        key = Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)
         if is_resource_registered(key):
             service_resource = get_resource(key)
             service_info = service_resource.get()
@@ -928,11 +886,12 @@ class ServiceClientMixin(object):
     ## Service registration (Resource) helpers
     #############################################
     def register_service(self, service_addr, service_passphrase):
-        if not is_resource_registered(Resource.create_key(service_addr)):
+        assure_resource(self.application)
+        if not is_resource_registered(Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)):
             service_conn = ServiceClientConnection(service_addr, service_passphrase)
             resource = Resource(**{
                 "name": service_addr, 
-                "resource_type": ServiceClientMixin._RESOURCE_TYPE, 
+                "resource_type": _SERVICE_RESOURCE_TYPE, 
                 "resource": {
                         'service_conn': service_conn,
                         'waiting_clients': {},
@@ -946,8 +905,9 @@ class ServiceClientMixin(object):
     def unregister_service(self, service_addr):
         """ Create and store a connection and it's listener and waiting_clients queue.
         To be safe, for now there is no unregister.
-        """ 
-        key = Resource.create_key(service_addr)
+        """
+        assure_resource(self.application)
+        key = Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)
         if not is_resource_registered(key):
             logging.debug("unregister_resource ignored: %s not registered" % key)
             return False
@@ -966,7 +926,7 @@ class ServiceClientMixin(object):
 
     def get_service_info(self, service_addr):
         """get the complete resource dict including service_info and waiting_events."""
-        key = Resource.create_key(service_addr)
+        key = Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)
         resource = get_resource(key)
         return resource.get()
 
@@ -977,67 +937,4 @@ class ServiceClientMixin(object):
     def get_waiting_clients(self, service_addr):
         """Get the list of events for waiting handlers."""
         return self.get_service_info(service_addr)['waiting_clients']
-
-
-class Resource(Document):
-    """A resource is an application level object to store arbitrary data in.
-        A resource may implement the following methods few methods:
-        on_registered(application)
-        `on_registered` is called once when a `resource` is registered.
-        on_unregistered(application)
-        `on_unregistered` is called once when a `resource` is unregistered.
-        
-        set(resource)
-        sets a resource for the instance
-        get()
-        retrun the last `resource` that was `set(resource)`
-        
-        
-        init expects `resource` as a keyword parameter
-        """
-    # The name of the resource. This is what it is looked up by.
-    name = StringField(required=True)
-    # a resource_type such as data_connection, queryset, service, anything really
-    resource_type = StringField(required=True)
-    # a list of categories
-    category = DictField(required=True)
-    
-    def __init__(self, *args, **kwargs):
-        self.resource = None # this is where we store the user defined resource
-        self.start_timestamp = int(time.time() * 1000)
-        self.end_timestamp = self.start_timestamp
-        super(Resource, self).__init__(*args, **kwargs)
-    
-    
-    def _on_register(self):
-        self.on_unregister()
-    
-    def _on_unregister(self):
-        self.on_unregister()
-    
-    def set(self, resource):
-        self.resource = resource;
-    
-    def get(self):
-        return self.resource;
-    
-    def key(self):
-        """used as the key when a resource is stored"""
-        return Resource.create_key(self.name, self.resource_type)
-    
-    @staticmethod
-    def create_key(name, resource_type=None):
-        """used as the key when a resource is stored"""
-        return ((resource_type if resource_type is not None else '') +
-                (name if name is not None else ''))
-    
-    ###########
-    ## over-ride these in your app if you need
-    ## to do something durinsg registration/unregistration
-    ###########
-    def on_register(self):
-        pass
-    
-    def on_unregister(self,):
-        pass
 
