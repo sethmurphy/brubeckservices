@@ -320,23 +320,23 @@ Let's look at some of the more important things we needed to do above:
 
     Let's look at a typical synchronous request.
 
-    *   Create a ServiceRequest.
+    Create a ServiceRequest.
     
-            service_request = self.create_service_request(
-                service_path, 
-                request_headers, 
-                sync_request_body
-            )
+        service_request = self.create_service_request(
+            service_path, 
+            request_headers, 
+            sync_request_body
+        )
     
-    *   Send a syncronouse ServiceRequest to a service
+    Send a syncronouse ServiceRequest to a service
 
-            (response, handler_response) = self.send(service_addr, service_request)
+        (response, handler_response) = self.send(service_addr, service_request)
 
     `service_addr` is a ZMQ protocol address such as `tcp://127.0.0.1:9999/my_service`
 
-    *   To send an asyncronous request the above line would change to:
+    To send an asyncronous request the above line would change to:
 
-            self.send_nowait(service_addr, service_request)
+        self.send_nowait(service_addr, service_request)
 
 
 ## Running the Demos
