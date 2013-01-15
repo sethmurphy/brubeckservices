@@ -34,10 +34,14 @@ from resource import (
     register_resource,
     unregister_resource,
     get_resource,
+    create_resource_key,
 )
 from brubeck.connections import (load_zmq, load_zmq_ctx)
 
+#########################################################
 ### Attempt to setup gevent wrappers for sleep and events
+### Always prefere gevent if installed, then try eventlet
+#########################################################
 if CORO_LIBRARY == 'gevent':
     from gevent.event import AsyncResult
     from gevent import sleep
@@ -54,7 +58,6 @@ if CORO_LIBRARY == 'gevent':
 
     CORO_LIBRARY = 'gevent'
 
-### Fallback to eventlet
 elif CORO_LIBRARY == 'eventlet':
     from eventlet import event
     from eventlet import sleep
@@ -424,14 +427,17 @@ class ServiceClientConnection(ServiceConnection):
         logging.debug("service_client_process_message")
         service_response = parse_service_response(message, self.passphrase)
     
-        #logging.debug("service_client_process_message service_response: %s" % service_response)
+        #logging.debug(
+            "service_client_process_message service_response: %s" % service_response
+        )
         
         logging.debug("service_client_process_message handle: %s" % handle)
         if handle:
             handler = application.route_message(service_response)
             handler.set_status(service_response.status_code,  service_response.status_msg)
             result = handler()
-            #logging.debug("service_client_process_message service_response: %s" % service_response)
+            #logging.debug(
+                "service_client_process_message service_response: %s" % service_response)
             #logging.debug("service_client_process_message result: %s" % result)
             return (service_response, result)
     
@@ -459,7 +465,9 @@ class ServiceClientConnection(ServiceConnection):
         body = to_bytes(json.dumps(service_req.body))
 
         msg = ' %s %d:%s%d:%s%d:%s' % (header, len(arguments), arguments,len(headers), headers, len(body), body)
-        #logging.debug("ServiceClientConnection send (%s): %s" % (service_req.conn_id, msg))
+        #logging.debug(
+            "ServiceClientConnection send (%s): %s" % (service_req.conn_id, msg)
+        )
         self.out_sock.send(msg)
 
         return service_req
@@ -664,7 +672,7 @@ class ServiceClientMixin(object):
 
     def _get_service_info(self, service_addr):
         if self._service_is_registered(service_addr):
-            key = Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)
+            key = create_resource_key(service_addr, _SERVICE_RESOURCE_TYPE)
             service_resource = get_resource(key)
             service_info = service_resource.get()
             return service_info
@@ -751,7 +759,7 @@ class ServiceClientMixin(object):
         """ Create and store a connection and it's listener and waiting_clients queue.
         """
         assure_resource(self.application)
-        key = Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)        
+        key = create_resource_key(service_addr, _SERVICE_RESOURCE_TYPE)        
         if not is_resource_registered(key):
             # create our service connection
             logging.debug("register_service creating service_conn: %s" % service_addr)
@@ -793,7 +801,7 @@ class ServiceClientMixin(object):
                 logging.debug("killing internal reply socket %s" % sock)
                 sock.close()
                 
-            key = Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)    
+            key = create_resource_key(service_addr, _SERVICE_RESOURCE_TYPE)    
             unregister_resource(key)
             logging.debug("unregister_service success: %s" % service_addr)
             return True

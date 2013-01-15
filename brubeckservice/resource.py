@@ -77,7 +77,15 @@ def get_resource(key):
         logging.debug("get_resource didn't find resource %s" % key)
         return None
 
+def create_resource_key(name, resource_type=None):
+    """used as the key when a resource is stored"""
+    return ((resource_type if resource_type is not None else '') +
+            (name if name is not None else ''))
 
+
+###################################################
+## Moved away from classes for now, not really used
+###################################################
 class Resource(Document):
     """A resource is an application level object to store arbitrary data in.
         A resource may implement the following methods few methods:
@@ -122,14 +130,8 @@ class Resource(Document):
     
     def key(self):
         """used as the key when a resource is stored"""
-        return Resource.create_key(self.name, self.resource_type)
-    
-    @staticmethod
-    def create_key(name, resource_type=None):
-        """used as the key when a resource is stored"""
-        return ((resource_type if resource_type is not None else '') +
-                (name if name is not None else ''))
-    
+        return create_resource_key(self.name, self.resource_type)
+        
     ###########
     ## over-ride these in your app if you need
     ## to do something durinsg registration/unregistration
