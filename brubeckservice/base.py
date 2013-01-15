@@ -563,7 +563,7 @@ def service_response_listener(application, service_addr, service_conn, handler):
         sender, conn_id = raw_response.split(' ', 1)
         
         conn_id = parse_msgstring(conn_id)[0]
-        handler.notify_service_client(service_addr, conn_id, raw_response)
+        handler._notify_waiting_service_client(service_addr, conn_id, raw_response)
     ##except:
     ##    raise
     ##finally:
@@ -590,33 +590,7 @@ class ServiceClientMixin(object):
             setattr(self, '_zmq_ctx', load_zmq_ctx())
         return self._zmq_ctx
 
-    def _wait(self, service_addr, conn_id):
-        """wait fro the application to create an event from the service listener"""
-        raw_response = None
-        conn_id = str(conn_id)
 
-
-        logging.debug("creating event for %s" % conn_id)
-
-        e = coro_get_event()
-        waiting_events = self.get_waiting_clients(service_addr)
-        waiting_events[conn_id] = (int(time.time()), e)
-
-        logging.debug("event for %s waiting" % conn_id)
-        raw_response = e.wait()
-        logging.debug("event for %s raised" % conn_id)
-
-
-        if raw_response is not None:
-            service_conn = self.get_service_conn(service_addr)
-            #logging.debug("process_message %s,%s,%s,%s" % (self.application, raw_response, self, service_addr))
-            results = service_conn.process_message( self.application, raw_response, 
-                self, service_addr
-                )
-            return results
-        else:
-            logging.debug("NO RESULTS")
-            return (None, None)
     ################################
     ## The public interface methods
     ## This is all your handlers should use
@@ -654,227 +628,103 @@ class ServiceClientMixin(object):
             "body": msg,
         }
         return ServiceRequest(**data)
-
-    def service_is_registered(self, name, type=None):
-        """Create our key and check if a resource is registered"""
-
-        # see if we have initialize _resource attribute on application
-        assure_resource(self.application)
-
-        return is_resource_registered(Resource.create_key(name, _SERVICE_RESOURCE_TYPE))
-
-    def register_service(self, service_addr, service_passphrase):
-        """just a wrapper for our application level register_service method right now"""
-        key = Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)
-        if not self.service_is_registered(key):
-            service_conn = ServiceClientConnection(
-                service_addr, service_passphrase
-            )
-            resource = Resource(**{
-                "name": service_addr,
-                "resource_type": _SERVICE_RESOURCE_TYPE,
-                "resource": {
-                    "service_conn": service_conn,
-                    "waiting_clients": {},
-                },
-            })
-            return register_resource(key, resource)
-        logging.debug("Service %s already registered" % service_addr)
-        return True
-
-
-    def unregister_service(self, service_addr):
-        """ Create and store a connection and it's listener and waiting_clients queue.
-        To be safe, for now there is no unregister.
-        """ 
-        if service_addr not in self._services:
-            logging.debug("unregister_service ignored: %s not registered" % service_addr)
-            return False
-        else:
-            service_info = self._services[service_addr]
-            # make sure we don't get new requests
-            service_conn = service_info['service_conn']
-            waiting_clients = service_info['waiting_clients']
-    
-    
-            service_conn.close()
-            for sock in waiting_clients:
-                logging.debug("killing internal reply socket %s" % sock)
-                sock.close()
-    
-            logging.debug("unregister_service success: %s" % service_addr)
-    
-            del self._services[service_addr]
-    
-            return True
-    
-    def get_service_info(self, service_addr):
-        if service_addr in self._services:
-            return self._services[service_addr]
-        else:
-            raise Exception("%s service not registered" % service_addr)
-    
-    def get_service_conn(self, service_addr):
-        return self.get_service_info(service_addr)['service_conn']
     
     def send_service_request(self, service_addr, service_req):
-        """send our message, used internally only"""
-        logging.debug("sending service request")
-        service_conn = self.get_service_conn(service_addr)
-        return service_conn.send(service_req)
-    
-    def get_waiting_clients(self, service_addr):
-        return self.get_service_info(service_addr)['waiting_clients']
-    
-    def notify_service_client(self, service_addr, conn_id, raw_results):
-        #logging.debug("NOTIFY: %s: %s (%s)" % (service_addr, conn_id, raw_results))
-        waiting_clients = self.get_waiting_clients(service_addr)
-        logging.debug("waiting_clients: %s" % (waiting_clients))
-        conn_id = str(conn_id)
-        if conn_id in waiting_clients:
-            logging.debug("conn_id %s found to notify(%s)" % (conn_id,waiting_clients[conn_id]))
-            coro_send_event(waiting_clients[conn_id][1], raw_results)
-            #logging.debug("conn_id %s sent to: %s" % (conn_id, raw_results))
-            coro_sleep(0)
-        else:
-            logging.debug("conn_id %s not found to notify." % conn_id)
-    
-    def registered_services(self):
-        """Access to our registered services""" 
-        return self._services
-        
-    def service_is_registered(self, service_addr):
-        """ Check if a service is registered""" 
-        if service_addr in self._services:
-            return True
-        else:
-            return False
-    
-    def register_service(self, service_addr, service_passphrase):
-        """ Create and store a connection and it's listener and waiting_clients queue.
-        """
-        assure_resource(self.application)
-        key = Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)        
-        if not is_resource_registered(key):
-            # create our service connection
-            logging.debug("register_service creating service_conn: %s" % service_addr)
-    
-            # create and start our listener
-            logging.debug("register_service starting listener: %s" % service_addr)
-            coro_spawn(service_response_listener, self.application, service_addr, service_conn, self)
-            # give above process a chance to start
-            coro_sleep(0)
-    
-            # add us to the list
-            self._services[service_addr] = {
-                'service_conn': service_conn,
-                'waiting_clients': {},
-            }
-            logging.debug("register_service success: %s" % service_addr)
-        else:
-            logging.debug("register_service ignored: %s already registered" % service_addr)
-        return True
-    
-    def unregister_service(self, service_addr):
-        """ Create and store a connection and it's listener and waiting_clients queue.
-        To be safe, for now there is no unregister.
-        """
-        assure_resource(self.application)
-        key = Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)
-        if not is_resource_registered(key):
-            logging.debug("unregister_service ignored: %s not registered" % service_addr)
-            return False
-        else:
-            service_resource = get_resource(key)
-            service_info = service_resource.get()
-            # make sure we don't get new requests
-            service_conn = service_info['service_conn']
-            waiting_clients = service_info['waiting_clients']
-    
-    
-            service_conn.close()
-            for sock in waiting_clients:
-                logging.debug("killing internal reply socket %s" % sock)
-                sock.close()
-    
-            logging.debug("unregister_service success: %s" % service_addr)
-    
-            del self._services[service_addr]
-    
-            return True
-    
-    def get_service_info(self, service_addr):
-        assure_resource(self.application)
-        key = Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)
-        if is_resource_registered(key):
-            service_resource = get_resource(key)
-            service_info = service_resource.get()
-            return service_info
-        else:
-            raise Exception("%s service not registered" % service_addr)
-    
-    def get_service_conn(self, service_addr):
-        return self.get_service_info(service_addr)['service_conn']
-    
-    def send_service_request(self, service_addr, service_req):
-        """send our message, used internally only"""
-        logging.debug("sending service request")
-        service_conn = self.get_service_conn(service_addr)
-        return service_conn.send(service_req)
-    
-    def get_waiting_clients(self, service_addr):
-        return self.get_service_info(service_addr)['waiting_clients']
-    
-    def notify_service_client(self, service_addr, conn_id, raw_results):
-        #logging.debug("NOTIFY: %s: %s (%s)" % (service_addr, conn_id, raw_results))
-        waiting_clients = self.get_waiting_clients(service_addr)
-        logging.debug("waiting_clients: %s" % (waiting_clients))
-        conn_id = str(conn_id)
-        if conn_id in waiting_clients:
-            logging.debug("conn_id %s found to notify(%s)" % (conn_id,waiting_clients[conn_id]))
-            coro_send_event(waiting_clients[conn_id][1], raw_results)
-            #logging.debug("conn_id %s sent to: %s" % (conn_id, raw_results))
-            coro_sleep(0)
-        else:
-            logging.debug("conn_id %s not found to notify." % conn_id)
-
-    def forward(self, service_addr, service_req):
-        """give up any responsability for the request, someone else will respond to the client
-        non-blocking, returns immediately.
-        """
-        raise NotImplemented("forward is not yet implemented, use send_nowait instead")
-
-
-    def send(self, service_addr, service_req):
         """do some work and wait for the results of the response to handle the response from the service
         blocking, waits for handled result.
         """
-        service_req = self.send_service_request(service_addr, service_req)
+        service_req = self._send_service_request(service_addr, service_req)
         conn_id = service_req.conn_id
         (response, handler_response) = self._wait(service_addr, conn_id)
 
         return (response, handler_response)
 
-    def send_nowait(self, service_addr, service_req):
+    def send_service_request_nowait(self, service_addr, service_req):
         """defer some work, but still handle the response yourself
         non-blocking, returns immediately.
         """
-        self.send_service_request(service_addr, service_req)
+        self._send_service_request(service_addr, service_req)
         return
 
-    def send_service_request(self, service_addr, service_req):
+    def forward_to_service(self, service_addr, service_req):
+        """give up any responsability for the request, someone else will respond to the client
+        non-blocking, returns immediately.
+        """
+        raise NotImplemented("forward_to_service is not yet implemented, use send_service_request_nowait instead")
+
+    ##########################################
+    ## Methods for sending the service request
+    ##########################################
+    def _send_service_request(self, service_addr, service_req):
         """send our message, used internally only"""
         logging.debug("sending service request")
-        service_conn = self.get_service_conn(service_addr)
+        service_conn = self._get_service_conn(service_addr)
         return service_conn.send(service_req)
 
-    def notify_service_client(self, service_addr, conn_id, raw_results):
+
+    def _get_service_info(self, service_addr):
+        if self._service_is_registered(service_addr):
+            key = Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)
+            service_resource = get_resource(key)
+            service_info = service_resource.get()
+            return service_info
+        else:
+            raise Exception("%s service not registered" % service_addr)
+
+    def _get_service_conn(self, service_addr):
+        """get the ServiceClientConnection for a service."""
+        service_info = self._get_service_info(service_addr)
+        if service_info is None:
+            return None
+        else:     
+            return service_info['service_conn']        
+
+    #################################################
+    ## Methods for waiting and notifying of response
+    #################################################
+    def _wait(self, service_addr, conn_id):
+        """wait fro the application to create an event from the service listener"""
+        raw_response = None
+        conn_id = str(conn_id)
+
+
+        logging.debug("creating event for %s" % conn_id)
+
+        e = coro_get_event()
+        waiting_events = self._get_waiting_service_clients(service_addr)
+        waiting_events[conn_id] = (int(time.time()), e)
+
+        logging.debug("event for %s waiting" % conn_id)
+        raw_response = e.wait()
+        logging.debug("event for %s raised" % conn_id)
+
+
+        if raw_response is not None:
+            service_conn = self._get_service_conn(service_addr)
+            #logging.debug("process_message %s,%s,%s,%s" % (self.application, raw_response, self, service_addr))
+            results = service_conn.process_message( self.application, raw_response, 
+                self, service_addr
+                )
+            return results
+        else:
+            logging.debug("NO RESULTS")
+            return (None, None)
+                                            
+    def _get_waiting_service_clients(self, service_addr):
+        """get the waiting service clients."""
+        service_info = self._get_service_info(service_addr)
+        if service_info is None:
+            return None
+        else:     
+            return _service_info['waiting_clients']
+
+    def _notify_waiting_service_client(self, service_addr, conn_id, raw_results):
         """Notify waiting events if they exist."""
         #logging.debug("NOTIFY: %s: %s (%s)" % (service_addr, conn_id, raw_results))
-        waiting_clients = self.get_waiting_clients(service_addr)
+        waiting_clients = self._get_waiting_service_clients(service_addr)
         logging.debug("waiting_clients: %s" % (waiting_clients))
         conn_id = str(conn_id)
-        if conn_id in waiting_clients:
+        if not waiting_clients is None and conn_id in waiting_clients:
             logging.debug("conn_id %s found to notify(%s)" % (conn_id,waiting_clients[conn_id]))
             coro_send_event(waiting_clients[conn_id][1], raw_results)
             #logging.debug("conn_id %s sent to: %s" % (conn_id, raw_results))
@@ -885,56 +735,66 @@ class ServiceClientMixin(object):
     #############################################
     ## Service registration (Resource) helpers
     #############################################
-    def register_service(self, service_addr, service_passphrase):
-        assure_resource(self.application)
-        if not is_resource_registered(Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)):
-            service_conn = ServiceClientConnection(service_addr, service_passphrase)
-            resource = Resource(**{
-                "name": service_addr, 
-                "resource_type": _SERVICE_RESOURCE_TYPE, 
-                "resource": {
-                        'service_conn': service_conn,
-                        'waiting_clients': {},
-                    }
-                    
-                }
-            )
-            coro_spawn(service_response_listener, self.application, service_addr, service_conn, self)
-            register_resource(resource)
+    def _registered_services(self):
+        """Access to our registered services""" 
+        return self._services
 
-    def unregister_service(self, service_addr):
+    def _service_is_registered(self, service_addr):
+        """ Check if a service is registered"""
+        _services = self._registered_services() 
+        if not _services is None and service_addr in _services:
+            return True
+        else:
+            return False
+
+    def _register_service(self, service_addr, service_passphrase):
+        """ Create and store a connection and it's listener and waiting_clients queue.
+        """
+        assure_resource(self.application)
+        key = Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)        
+        if not is_resource_registered(key):
+            # create our service connection
+            logging.debug("register_service creating service_conn: %s" % service_addr)
+            
+            service_conn = ServiceClientConnection(
+                            service_addr, service_passphrase
+                        )
+
+            # create and start our listener
+            logging.debug("register_service starting listener: %s" % service_addr)
+            coro_spawn(service_response_listener, self.application, service_addr, service_conn, self)
+            # give above process a chance to start
+            coro_sleep(0)
+    
+            # add us to the list
+            self._registered_services()[service_addr] = {
+                'service_conn': service_conn,
+                'waiting_clients': {},
+            }
+            logging.debug("register_service success: %s" % service_addr)
+        else:
+            logging.debug("register_service ignored: %s already registered" % service_addr)
+        return True
+
+    def _unregister_service(self, service_addr):
         """ Create and store a connection and it's listener and waiting_clients queue.
         To be safe, for now there is no unregister.
         """
         assure_resource(self.application)
-        key = Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)
-        if not is_resource_registered(key):
-            logging.debug("unregister_resource ignored: %s not registered" % key)
+        if not self._service_is_registered(service_addr):
+            logging.debug("unregister_resource ignored: %s not registered" % service_addr)
             return False
         else:
-            resource = get_resource(key)
-            service_info = _resources[key]
+            service_info = self._get_service_info(service_addr)
             service_conn = service_info['service_conn']
             waiting_clients = service_info['waiting_clients']
             service_conn.close()
             for sock in waiting_clients:
                 logging.debug("killing internal reply socket %s" % sock)
                 sock.close()
+                
+            key = Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)    
             unregister_resource(key)
             logging.debug("unregister_service success: %s" % service_addr)
             return True
-
-    def get_service_info(self, service_addr):
-        """get the complete resource dict including service_info and waiting_events."""
-        key = Resource.create_key(service_addr, _SERVICE_RESOURCE_TYPE)
-        resource = get_resource(key)
-        return resource.get()
-
-    def get_service_conn(self, service_addr):
-        """get the ServiceClientConnection for a service."""
-        return self.get_service_info(service_addr)['service_conn']
-    
-    def get_waiting_clients(self, service_addr):
-        """Get the list of events for waiting handlers."""
-        return self.get_service_info(service_addr)['waiting_clients']
 

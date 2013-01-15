@@ -161,7 +161,7 @@ class CallServiceAsyncHandler(
         )
 
         ## Async
-        self.send_nowait(service_addr, service_request)
+        self.send_service_request_nowait(service_addr, service_request)
 
         # now return to client whatever you want
         self.set_status(200)
@@ -188,7 +188,7 @@ class CallServiceSyncHandler(
         )
 
         ## Sync
-        (response, handler_response) = self.send(service_addr, service_request)
+        (response, handler_response) = self.send_service_request(service_addr, service_request)
 
         logging.debug("Took a while, but lot's to say now")
         logging.debug("response: %s" % response)
@@ -305,7 +305,7 @@ Let's look at some of the more important things we needed to do above:
             
             
                 ## Sync
-                (response, handler_response) = self.send(service_addr, service_request)
+                (response, handler_response) = self.send_service_request(service_addr, service_request)
     
                 logging.debug("Took a while, but lot's to say now")
                 logging.debug("response: %s" % response)
@@ -330,13 +330,13 @@ Let's look at some of the more important things we needed to do above:
     
     Send a syncronouse ServiceRequest to a service
 
-        (response, handler_response) = self.send(service_addr, service_request)
+        (response, handler_response) = self.send_service_request(service_addr, service_request)
 
     `service_addr` is a ZMQ protocol address such as `tcp://127.0.0.1:9999/my_service`
 
     To send an asyncronous request the above line would change to:
 
-        self.send_nowait(service_addr, service_request)
+        self.send_service_request_nowait(service_addr, service_request)
 
 
 ## Running the Demos

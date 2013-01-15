@@ -54,7 +54,7 @@ class CallServiceAsyncHandler(
         )
 
         ## Async
-        self.send_nowait(service_addr, service_request)
+        self.send_service_request_nowait(service_addr, service_request)
 
         # now return to client whatever you want
         self.set_status(200)
@@ -81,7 +81,7 @@ class CallServiceSyncHandler(
         )
 
         ## Sync
-        (response, handler_response) = self.send(service_addr, service_request)
+        (response, handler_response) = self.send_service_request(service_addr, service_request)
 
         logging.debug("Took a while, but lot's to say now")
         logging.debug("response: %s" % response)
