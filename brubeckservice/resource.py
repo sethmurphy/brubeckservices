@@ -36,18 +36,24 @@ def is_resource_registered(key):
         logging.debug("Nope")
         return False
 
-def register_resource(resource):
+def register_resource(resource, key=None):
     """ Store (register) a resource and call our on_register hook.
+        A resource can be anything. Tuples prefered, objects OK.
+        key can be None only if we are using a Resource object.
     """
-    key = resource.key()
+
+    if isinstance(resource, Resource):
+        key = resource.key()
+            
     if key not in _resources:
         # add us to the list
         _resources[key] = resource
-        resource._on_register()
-        logging.debug("register_resource success: %s" % resource.name)
+        if isinstance(resource, Resource):
+            resource._on_register()
+        logging.debug("register_resource success key: %s" % key)
     else:
-        logging.debug("register_resource ignored: %s already registered" % 
-            resource.name)
+        logging.debug("register_resource ignored: already registered key %s" % 
+            key)
     return True
 
 def unregister_resource(key):
@@ -58,11 +64,10 @@ def unregister_resource(key):
         return False
     else:
         resource = _resources[key]
-        resource._on_unregistered()
-        logging.debug("unregister_resource success: %s" % service_addr)
-
-        resource._on_unregister()
+        logging.debug("unregister_resource success key: %s" % key)                    
         del _resources[key]
+        if isinstance(resource, Resource):
+            resource._on_unregistered()
 
         return True
 
@@ -106,8 +111,6 @@ class Resource(Document):
     name = StringField(required=True)
     # a resource_type such as data_connection, queryset, service, anything really
     resource_type = StringField(required=True)
-    # a list of categories
-    category = DictField(required=True)
     
     def __init__(self, *args, **kwargs):
         self.resource = None # this is where we store the user defined resource

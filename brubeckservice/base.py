@@ -28,7 +28,6 @@ from dictshield.fields import (StringField,
 )
 from uuid import uuid4
 from resource import (
-    Resource,
     assure_resource,
     is_resource_registered,
     register_resource,
@@ -427,7 +426,7 @@ class ServiceClientConnection(ServiceConnection):
         logging.debug("service_client_process_message")
         service_response = parse_service_response(message, self.passphrase)
     
-        #logging.debug(
+        logging.debug(
             "service_client_process_message service_response: %s" % service_response
         )
         
@@ -436,9 +435,9 @@ class ServiceClientConnection(ServiceConnection):
             handler = application.route_message(service_response)
             handler.set_status(service_response.status_code,  service_response.status_msg)
             result = handler()
-            #logging.debug(
+            logging.debug(
                 "service_client_process_message service_response: %s" % service_response)
-            #logging.debug("service_client_process_message result: %s" % result)
+            logging.debug("service_client_process_message result: %s" % result)
             return (service_response, result)
     
         return (service_response, None)
@@ -465,7 +464,7 @@ class ServiceClientConnection(ServiceConnection):
         body = to_bytes(json.dumps(service_req.body))
 
         msg = ' %s %d:%s%d:%s%d:%s' % (header, len(arguments), arguments,len(headers), headers, len(body), body)
-        #logging.debug(
+        logging.debug(
             "ServiceClientConnection send (%s): %s" % (service_req.conn_id, msg)
         )
         self.out_sock.send(msg)
@@ -604,6 +603,14 @@ class ServiceClientMixin(object):
     ## This is all your handlers should use
     ################################
 
+    def register_service(self, service_addr, service_passphrase):
+        """Public wrapper around _register_service"""
+        return self._register_service(service_addr, service_passphrase)
+        
+    def unregister_service(self, service_addr, service_passphrase):
+        """Public wrapper around _unregister_service"""
+        return self._unregister_service(service_addr, service_passphrase)
+        
     def create_service_request(self, path, method=_DEFAULT_SERVICE_REQUEST_METHOD, arguments={}, msg={}, headers={}):
         """ path - string, used to route to proper handler
             method - used to map to the proper method of the handler
@@ -673,8 +680,7 @@ class ServiceClientMixin(object):
     def _get_service_info(self, service_addr):
         if self._service_is_registered(service_addr):
             key = create_resource_key(service_addr, _SERVICE_RESOURCE_TYPE)
-            service_resource = get_resource(key)
-            service_info = service_resource.get()
+            service_info = get_resource(key)
             return service_info
         else:
             raise Exception("%s service not registered" % service_addr)
@@ -724,7 +730,7 @@ class ServiceClientMixin(object):
         if service_info is None:
             return None
         else:     
-            return _service_info['waiting_clients']
+            return service_info['waiting_clients']
 
     def _notify_waiting_service_client(self, service_addr, conn_id, raw_results):
         """Notify waiting events if they exist."""
@@ -743,17 +749,11 @@ class ServiceClientMixin(object):
     #############################################
     ## Service registration (Resource) helpers
     #############################################
-    def _registered_services(self):
-        """Access to our registered services""" 
-        return self._services
-
+    
     def _service_is_registered(self, service_addr):
         """ Check if a service is registered"""
-        _services = self._registered_services() 
-        if not _services is None and service_addr in _services:
-            return True
-        else:
-            return False
+        key = create_resource_key(service_addr, _SERVICE_RESOURCE_TYPE)
+        return is_resource_registered(key)
 
     def _register_service(self, service_addr, service_passphrase):
         """ Create and store a connection and it's listener and waiting_clients queue.
@@ -775,20 +775,16 @@ class ServiceClientMixin(object):
             coro_sleep(0)
     
             # add us to the list
-            self._registered_services()[service_addr] = {
-                'service_conn': service_conn,
-                'waiting_clients': {},
-            }
-            logging.debug("register_service success: %s" % service_addr)
+            resource = {'service_conn': service_conn, 'waiting_clients': {}}
+            register_resource(resource, key)
+            logging.debug("register_service success: %s" % key)
         else:
             logging.debug("register_service ignored: %s already registered" % service_addr)
         return True
 
-    def _unregister_service(self, service_addr):
-        """ Create and store a connection and it's listener and waiting_clients queue.
-        To be safe, for now there is no unregister.
+    def _unregister_service(self, service_addr,service_passphrase):
+        """ unregister a service.
         """
-        assure_resource(self.application)
         if not self._service_is_registered(service_addr):
             logging.debug("unregister_resource ignored: %s not registered" % service_addr)
             return False
