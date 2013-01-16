@@ -584,20 +584,6 @@ class ServiceClientMixin(object):
         self.application
     """
 
-    @property
-    def zmq(self):
-        if not hasattr(self, '_zmq'):
-            setattr(self, '_zmq', load_zmq())
-        return self._zmq
-
-
-    @property
-    def zmq_ctx(self):
-        if not hasattr(self, '_zmq_ctx'):
-            setattr(self, '_zmq_ctx', load_zmq_ctx())
-        return self._zmq_ctx
-
-
     ################################
     ## The public interface methods
     ## This is all your handlers should use
