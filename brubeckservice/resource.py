@@ -14,11 +14,15 @@ from dictshield.fields import (StringField,
 # class that will be added dynamically
 _resources = None
 
-def assure_resource(application):
-    """assure that our application has a _resources property"""
-    logging.debug("Checking for %s _resources" % application)
+def assure_resource(application=None):
+    """assure that our application, if it exists, has a _resources property"""
+    logging.debug("Checking for %s _resources " % application)
     global _resources
-    if not hasattr(application, '_resources'):
+    if application is None:
+        _resources = {}
+        logging.debug("_resources initialized and stored in request scope only " % _resources)
+        
+    elif not hasattr(application, '_resources'):
         setattr(application, '_resources', {})
         logging.debug("Created _resource attr")
         _resources = application._resources
