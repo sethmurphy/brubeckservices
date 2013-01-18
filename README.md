@@ -5,7 +5,7 @@ Just because Brubeck is fast doesn't mean you should do everything in one proces
 
 Brubeck uses ZMQ (ZeroMQ) to receive messages when using Mongrel2 as a web front end. Brubeck Services allow you to use ZMQ to also make requests to a  Brubeck Service instance. A Brubeck Service is a special instance that listens for requests from other Brubeck Instances instead of Mongrel2 (or a wsgi server if that is your preffered Brubeck web application interface). 
 
-Distributing all or part of a request to a Bruebck Service allows CPU intensive processes to be run on other machines/processes. This then frees up the inital Brubeck Instance to work on other web requests, handling i/o intensive processes only.
+Distributing all or part of a request to a Brubeck Service allows CPU intensive processes to be run on other machines/processes. This then frees up the inital Brubeck instance to work on other web requests, handling I/O intensive processes only.
 
 ## Service Patterns
 
@@ -15,15 +15,16 @@ Services are called from handler and can have the following patterns.
     
     A service is called and control is immediately returned to the calling service which is then responsible for responding to the initial the web request.
     
-    A response is still sent back to the Brubeck Application Instance and handled as needed, however the web client is no longer involved. 
+    A response is still sent back to the Brubeck Application Instance and handled as needed, however the web client is no longer involved.
+    
 
 2.  Synchronous Service Call
     
-    A service is called and the result is returned when the service has complete it's task. This behaves the same as a blocking call in the handler code, but allows other requests to be handled and is non-blocking for the server instance.
+    A service is called and the result is returned when the service has complete its task. This behaves the same as a blocking call in the handler code, but allows other requests to be handled and is non-blocking for the server instance.
 
-    A response is sent back to the Brubeck Application Instance and handled as needed. The caller gets the initial request and the handled response returned to them in a tuple. 
+    A response is sent back to the Brubeck Application Instance and handled as needed. The caller gets the initial request and the response from the handled response returned to them in a tuple. 
     
-    Using the returned ReplyRequest and response text(if needed) they are responsible for responding to the initial web request.
+    Using the returned ReplyRequest and response text(if needed) they are responsible for then continuing from the point of the service call and responding to the initial web request.
 
 ## Brubeck Service
 
@@ -91,16 +92,18 @@ Let's look at some of the code from the handler `SlowEchoServiceHandler` above.
     
     self.add_to_payload("RETURN_DATA", self.message.body["RETURN_DATA"])
 
+
 2. We then set the headers with the only required attribute `METHOD` set to `response`. Our status is HTTP like and we set to `200` to indicate success.
 
     self.headers = {"METHOD": "response"}
     self.set_status(200, "Took a while, but I am back.")
 
+
 3. Calling `self.render()` will create a JSON body from the payload and send a `ServiceResponse` to the client that made the initial request. The `path` of the reply will be the same as the request, and along with the `METHOD` will be used to map to the proper handler on the initiating client side.
 
 ## Brubeck Service Client
 
-A brubeck service client is a Brubeck Instance that has been started with a `brubeck.connection.Mongrel2Connection` and uses at least one `MessageHandler` instance that is a `brubeckservices.base.ServiceClientMixin`.
+A brubeck service client is a typically a `MessageHandler` instance that must be a `brubeckservices.base.ServiceClientMixin`. Technically it doesn't need to derive from `MessageHandler` and can be any class, but it should have the `application` attribute. The application attribute allows resources to be stored at an application level and cached between requests. Without this attribute there will be no caching and a connection will be created for each request.
 
 Here is the complete Brubeck Service Client from [demo_service_client.py](https://github.com/sethmurphy/brubeckservices/blob/master/demos/demo_service_client.py)
 
