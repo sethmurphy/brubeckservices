@@ -18,10 +18,12 @@ class SlowEchoServiceHandler(ServiceMessageHandler):
 
     def request(self):
         """do something and take too long"""
+        logging.debug("Starting request %s:%s" % (self.message.conn_id, int(time.time())))
         coro_sleep(5)
         self.set_status(200, "Took a while, but I am back.")
         self.add_to_payload("RETURN_DATA", self.message.get_argument("RETURN_DATA", "NO DATA"))
         self.headers = {"METHOD": "response"}
+        logging.debug("Done, sending back %s:%s" % (self.message.conn_id, int(time.time())))
         return self.render()
 
 
@@ -29,7 +31,7 @@ class SlowEchoServiceHandler(ServiceMessageHandler):
 ## runtime configuration
 ##
 config = {
-    'msg_conn': ServiceConnection('ipc://run/slow', 'my_shared_secret'),
+    'msg_conn': ServiceConnection('ipc://run/slow', 'ipc://run/slow_response', 'my_shared_secret'),
     'handler_tuples': [ ## Set up our routes
         # Handle our service responses
         (r'^/service/slow', SlowEchoServiceHandler),
