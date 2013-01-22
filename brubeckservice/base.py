@@ -302,22 +302,20 @@ class ServiceConnection(Mongrel2Connection):
         zmq = load_zmq()
         ctx = load_zmq_ctx()
 
-        # the response is sent to original clients incoming DEALER socket
-        out_sock = ctx.socket(zmq.ROUTER)
+        self.sender_id = uuid4().hex
+        self.in_addr = svc_addr
+        self.out_addr = svc_resp_addr
+
 
         # the request (in_sock) is received from a DEALER socket (round robin)
-        in_sock = ctx.socket(zmq.ROUTER)
+        self.in_sock = ctx.socket(zmq.PULL)
+        self.in_sock.connect(self.in_addr)
+        print("Connected service requested PULL socket %s" % (self.in_addr))
 
-        out_sock.bind(svc_resp_addr)
-        out_sock.connect(svc_resp_addr)
-
-        in_sock.bind(svc_addr)
-        in_sock.connect(svc_addr)
-
-        Connection.__init__(self, in_sock, out_sock)
-
-        self.out_addr = svc_resp_addr
-        self.in_addr = svc_addr
+        # the response is sent to original clients incoming DEALER socket
+        self.out_sock = ctx.socket(zmq.ROUTER)
+        self.out_sock.connect(self.out_addr)
+        print("Connected service response ROUTER socket %s" % (self.out_addr))
 
         self.zmq = zmq
         self.passphrase = passphrase
@@ -387,7 +385,7 @@ class ServiceConnection(Mongrel2Connection):
             len(body), body,
         )
         
-        #logging.debug("ServiceConnection send (%s) : %s" % (service_response.sender, msg))
+        logging.debug("ServiceConnection send (%s) : \"%s\"" % (service_response.sender, msg))
 
         self.out_sock.send(service_response.sender, self.zmq.SNDMORE)
         self.out_sock.send("", self.zmq.SNDMORE)
@@ -423,24 +421,21 @@ class ServiceClientConnection(ServiceConnection):
         """
 
         self.passphrase = passphrase
-        self.sender_id = str(uuid4())
+        self.sender_id = uuid4().hex
+        self.out_addr = svc_addr
+        self.in_addr = svc_resp_addr
         
         zmq = load_zmq()
         ctx = load_zmq_ctx()
 
-        out_sock = ctx.socket(zmq.DEALER)
-        in_sock = ctx.socket(zmq.DEALER)
+        self.out_sock = ctx.socket(zmq.PUSH)
+        self.out_sock.bind(self.out_addr)
+        logging.debug("Bound service request PUSH socket %s" % (self.out_addr))
 
-        out_sock.setsockopt(zmq.IDENTITY, self.sender_id)
-        out_sock.connect(svc_addr)
-
-        in_sock.setsockopt(zmq.IDENTITY, self.sender_id)
-        in_sock.connect(svc_resp_addr)
-
-        Connection.__init__(self, in_sock, out_sock)
-
-        self.out_addr = svc_addr
-        self.in_addr = svc_resp_addr
+        self.in_sock = ctx.socket(zmq.DEALER)
+        self.in_sock.setsockopt(zmq.IDENTITY, self.sender_id)
+        self.in_sock.bind(self.in_addr)
+        logging.debug("Bound service response DEALER socket %s ID:%s" % (self.in_addr, self.sender_id))
 
         self.zmq = zmq
 
@@ -476,10 +471,11 @@ class ServiceClientConnection(ServiceConnection):
     def send(self, service_req):
         """Send will wait for a response with a listener and is async
         """
-        service_req.conn_id = str(uuid4())
+        service_req.conn_id = uuid4().hex
 
 
-        header = "%d:%s %d:%s %d:%s %d:%s %d:%s %d:%s %d:%s %d:%s" % (
+        header = "%s %d:%s %d:%s %d:%s %d:%s %d:%s %d:%s %d:%s %d:%s" % (
+            self.sender_id,
             len(str(service_req.conn_id)), str(service_req.conn_id),
             len(str(service_req.request_timestamp)), str(service_req.request_timestamp),
             len(str(self.passphrase)), str(self.passphrase),
@@ -495,7 +491,7 @@ class ServiceClientConnection(ServiceConnection):
 
         msg = ' %s %d:%s%d:%s%d:%s' % (header, len(arguments), arguments,len(headers), headers, len(body), body)
         logging.debug(
-            "ServiceClientConnection send (%s): %s" % (service_req.conn_id, msg)
+            "ServiceClientConnection send (%s:%s): %s" % (self.sender_id, service_req.conn_id, msg)
         )
         self.out_sock.send(msg)
 

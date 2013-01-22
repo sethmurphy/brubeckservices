@@ -49,7 +49,7 @@ func createBrubeckServiceRequest(service_request map[string] []string) *brubeckS
     request_timestamp, err := strconv.ParseInt(service_request["request_timestamp"][0], 10, 64)
     if err == nil {
         return &brubeckServiceRequest{
-            "", service_request["conn_id"][0],
+            service_request["sender"][0], service_request["conn_id"][0],
             request_timestamp,
             service_request["origin_sender_id"][0],
             service_request["origin_conn_id"][0],
@@ -102,7 +102,7 @@ func createBrubeckServiceResponse(service_request *brubeckServiceRequest,
     method string, arguments map[string] string, 
     body string, headers map[string] string) *brubeckServiceResponse {
     return &brubeckServiceResponse {
-        "", service_request.conn_id,
+        service_request.sender, service_request.conn_id,
         service_request.request_timestamp,
         time.Now().Unix(), 0,
         service_request.origin_sender_id, service_request.origin_conn_id, service_request.origin_out_addr,
@@ -118,30 +118,37 @@ func createBrubeckServiceResponse(service_request *brubeckServiceRequest,
 // or the value to the right of the first ':' does not match the size
 // an error of NOT nil will be returned
 func parse_msg_string(text string) ([]string, error) {
+    println("parse_msg_string: ", text)
     field_parts := strings.SplitN(text, ":", 2)
-    field_len, err := strconv.Atoi(strings.Trim(field_parts[0], " "))
     field_values := make([]string, 0)
-    if err != nil {
-        // handle error
-        fmt.Println(field_parts[0], err)
-        return field_values, err
-    }
-    field_val := field_parts[1]
-    field_values = append(field_values, field_parts[1][:field_len])
-    if len(field_val) != field_len {
-        // try parsing the rest too
-        rest_parts, err := parse_msg_string(field_parts[1][field_len:])
-        if err == nil {
-            field_val = field_parts[1][:field_len]
-            for _, value := range rest_parts {
-                field_values = append(field_values, value)
-            }
-        } else {
+    if strings.Contains(text, ":") == false {
+        // we may just be a value with no length indicator
+        field_values = append(field_values, field_parts[0])
+        fmt.Println("field_val:", field_parts[0])
+    } else {
+        field_len, err := strconv.Atoi(strings.Trim(field_parts[0], " "))
+        if err != nil {
+            // handle error
+            fmt.Println(field_parts[0], err)
             return field_values, err
         }
+
+        field_val := field_parts[1]
+        field_values = append(field_values, field_parts[1][:field_len])
+        if len(field_val) != field_len {
+            // try parsing the rest too
+            rest_parts, err := parse_msg_string(field_parts[1][field_len:])
+            if err == nil {
+                field_val = field_parts[1][:field_len]
+                for _, value := range rest_parts {
+                    field_values = append(field_values, value)
+                }
+            } else {
+                return field_values, err
+            }
+        }
+        fmt.Println("field_len, field_val: ", field_len, ",", field_val)
     }
-    println("field_len", field_len)
-    println("field_val", field_val)
     return field_values, nil
 }
 
@@ -150,15 +157,16 @@ func service_request_field_name(index int) (string, error) {
     field_name := ""
     switch index {
     default: return field_name, errors.New("Invalid service_request_field_name index, must be > 0 and < 10")
-    case 0: field_name = "conn_id" 
-    case 1: field_name = "request_timestamp" 
-    case 2: field_name = "msg_passphrase"
-    case 3: field_name = "origin_sender_id"
-    case 4: field_name = "origin_conn_id"
-    case 5: field_name = "origin_out_addr"
-    case 6: field_name = "path"
-    case 7: field_name = "method"
-    case 8: field_name = "body"
+    case 0: field_name = "sender" 
+    case 1: field_name = "conn_id" 
+    case 2: field_name = "request_timestamp" 
+    case 3: field_name = "msg_passphrase"
+    case 4: field_name = "origin_sender_id"
+    case 5: field_name = "origin_conn_id"
+    case 6: field_name = "origin_out_addr"
+    case 7: field_name = "path"
+    case 8: field_name = "method"
+    case 9: field_name = "body"
     }
     return field_name, nil
  }
@@ -170,8 +178,9 @@ func service_request_field_name(index int) (string, error) {
 //  path, method, body
 // This parses the envelope only and not the message body 
 func parse_service_request(text string) (map[string] []string, error) {
-	msg_parts := strings.SplitN(strings.Trim(text, " "),  " ", 9)
-    var request_field_values = make(map[string][]string, 9)
+	println("parse_service_request:", text)
+    msg_parts := strings.SplitN(strings.Trim(text, " "),  " ", 10)
+    var request_field_values = make(map[string][]string, 10)
     for i := 0; i < len(msg_parts); i ++ {
         var field_val, err = parse_msg_string(msg_parts[i])
         if err == nil {
@@ -258,6 +267,9 @@ func send_response(service_response *brubeckServiceResponse, socket zmq.Socket, 
         len(service_response.body), service_response.body,
     )
     // send our message
+    println(msg)
+    socket.Send([]byte(service_response.sender), zmq.SNDMORE)
+    socket.Send(nil, zmq.SNDMORE)
     socket.Send([]byte(msg), 0)
     
     // We are done, nothing to report
@@ -266,12 +278,12 @@ func send_response(service_response *brubeckServiceResponse, socket zmq.Socket, 
 
 func main() {
     context, _ := zmq.NewContext()
-	insocket, _ := context.NewSocket(zmq.DEALER)
-	outsocket, _ := context.NewSocket(zmq.DEALER)
+	insocket, _ := context.NewSocket(zmq.PULL)
+	outsocket, _ := context.NewSocket(zmq.ROUTER)
 	defer context.Close()
 	defer insocket.Close()
-	insocket.Bind("ipc://run/slow")
-	outsocket.Bind("ipc://run/slow_response")
+	insocket.Connect("ipc://run/slow")
+	outsocket.Connect("ipc://run/slow_response")
     const passphrase = "my_shared_secret"
     //test_msg := " 36:4d80af85-5e31-4322-9b27-8e9fbb5ae69f 13:1358433619512 16:my_shared_secret 36:34f9ceee-cd52-4b7f-b197-88bf2f0ec378 1:1 20:tcp://127.0.0.1:9998 13:/service/slow 7:request 75:{\"RETURN_DATA\":\"I made a round trip, it took a while but I bring results.\"}2:{}2:{}"
     //var request_fields, err = parse_service_request(test_msg)
