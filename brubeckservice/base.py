@@ -439,7 +439,14 @@ class ServiceClientConnection(ServiceConnection):
 
         self.zmq = zmq
 
-    def process_message(self, application, message, service_client, service_addr, handle=True):
+    def process_message(
+        self,
+        application,
+        message,
+        service_addr,
+        service_passphrase,
+        handle=True
+    ):
         """This coroutine looks at the message, determines which handler will
         be used to process it, and then begins processing.
         Since this is a reply, not a request,
@@ -448,7 +455,7 @@ class ServiceClientConnection(ServiceConnection):
             from parsing the message and 2) the handlers return value
         """
         logging.debug("service_client_process_message")
-        service_response = parse_service_response(message, self.passphrase)
+        service_response = parse_service_response(message, service_passphrase)
     
         logging.debug(
             "service_client_process_message service_response: %s" % service_response
@@ -585,7 +592,7 @@ class ServiceMessageHandler(MessageHandler):
         finally:
             self.on_finish()
 
-def service_response_listener(application, service_addr,  service_resp_addr, service_conn):
+def service_response_listener(application, service_addr,  service_resp_addr, service_conn, service_passphrase, handle=True):
     """Function runs in a coroutine, one listener for each server per handler.
     Once running, it stays running until the brubeck instance is killed."""
     ##try:
@@ -597,7 +604,19 @@ def service_response_listener(application, service_addr,  service_resp_addr, ser
         sender, conn_id = raw_response.split(' ', 1)
         
         conn_id = parse_msgstring(conn_id)[0]
-        _notify_waiting_service_client(application, service_addr, conn_id, raw_response)
+        if (
+            not _notify_waiting_service_client(application, service_addr, conn_id, raw_response)
+            and handle
+        ):
+            # Call our handler
+            (response, handler_response) = service_conn.process_message( 
+                application,
+                raw_response,
+                service_addr,
+                service_passphrase,
+                handle
+            )
+            
     ##except:
     ##    raise
     ##finally:
@@ -616,9 +635,9 @@ class ServiceClientMixin(object):
     ## This is all your handlers should use
     ################################
 
-    def register_service(self, service_addr, service_resp_addr, service_passphrase):
+    def register_service(self, service_addr, service_resp_addr, service_passphrase, handle=True):
         """Public wrapper around _register_service"""
-        return _register_service(self.application, service_addr, service_resp_addr, service_passphrase)
+        return _register_service(self.application, service_addr, service_resp_addr, service_passphrase, handle)
         
     def unregister_service(self, service_addr, service_passphrase):
         """Public wrapper around _unregister_service"""
@@ -761,8 +780,10 @@ def _notify_waiting_service_client(application, service_addr, conn_id, raw_resul
         coro_send_event(waiting_clients[conn_id][1], raw_results)
         #logging.debug("conn_id %s sent to: %s" % (conn_id, raw_results))
         coro_sleep(0)
+        return True
     else:
         logging.debug("conn_id %s not found to notify." % conn_id)
+        return False
 
 ############################################
 ## Service registration (Resource) helpers
@@ -773,7 +794,7 @@ def _service_is_registered(application, service_addr):
     key = create_resource_key(service_addr, _SERVICE_RESOURCE_TYPE)
     return is_resource_registered(key)
 
-def _register_service(application, service_addr, service_resp_addr, service_passphrase):
+def _register_service(application, service_addr, service_resp_addr, service_passphrase, handle=True):
     """ Create and store a connection and it's listener and waiting_clients queue.
     """
     assure_resource(application)
@@ -788,7 +809,15 @@ def _register_service(application, service_addr, service_resp_addr, service_pass
 
         # create and start our listener
         logging.debug("register_service starting listener: %s" % service_addr)
-        coro_spawn(service_response_listener, application, service_addr,  service_resp_addr, service_conn)
+        coro_spawn(
+            service_response_listener,
+            application, 
+            service_addr, 
+            service_resp_addr, 
+            service_conn, 
+            service_passphrase,
+            handle
+        )
         # give above process a chance to start
         coro_sleep(0)
     
