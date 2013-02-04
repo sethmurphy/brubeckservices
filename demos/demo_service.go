@@ -275,7 +275,7 @@ func send_response(service_response *brubeckServiceResponse, socket zmq.Socket, 
     // We are done, nothing to report
     return
 }
-
+func register_handler()
 func main() {
     context, _ := zmq.NewContext()
 	insocket, _ := context.NewSocket(zmq.PULL)

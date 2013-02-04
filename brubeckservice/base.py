@@ -3,6 +3,7 @@ import os
 import sys
 import time
 import ujson as json
+import string
 
 from brubeck.connections import (
     load_zmq,
@@ -18,13 +19,14 @@ from brubeck.request_handling import (
     CORO_LIBRARY,
 )
 from dictshield.document import Document
-from dictshield.fields import (StringField,
-                               BooleanField,
-                               URLField,
-                               EmailField,
-                               LongField,
-                               DictField,
-                               IntField,
+from dictshield.fields import (
+    StringField,
+    BooleanField,
+    URLField,
+    EmailField,
+    LongField,
+    DictField,
+    IntField,
 )
 from uuid import uuid4
 from resource import (
@@ -74,8 +76,8 @@ elif CORO_LIBRARY == 'eventlet':
 
     CORO_LIBRARY = 'eventlet'
 
-# supported methods for a service
-SERVICE_METHODS = ['get', 'post', 'put', 'delete', 
+# supported methods for a service (MAYBE, NOT ALL IMPLEMENTED)
+_SERVICE_METHODS = ['get', 'post', 'put', 'delete', 
                    'options', 'connect', 'response', 'request']
 _DEFAULT_SERVICE_REQUEST_METHOD = 'request'
 _DEFAULT_SERVICE_RESPONSE_METHOD = 'response'
@@ -85,12 +87,21 @@ _SERVICE_RESOURCE_TYPE = 'SERVICE'
 ## Request and Response stuff 
 #################################
 
-def parse_msgstring(field_text):
-    """ field_value - a value in n:data format where n is the data length
+
+#########################################################
+## Some functions for creating/parsing tnetstrings fields
+#########################################################
+def t(text):
+    """create a tnetstring field given the text"""
+    return "%d:%s" % (len(str(text)), str(text))
+
+def t_parse(field_text):
+    """ parse a tnetstring field, and return any remainder
+        field_value - a value in n:data format where n is the data length
             and data is the text to get the first n chars from
         returns the a tuple containing the value and whatever remains
     """
-    logging.debug("parse_msgstring: %s" % field_text)
+    logging.debug("t_parse: %s" % field_text)
     field_data = field_text.split(':', 1)
     expected_len = int(field_data[0])
     logging.debug("expected_len: %s" % expected_len)
@@ -108,44 +119,39 @@ def parse_service_request(msg, passphrase):
     message read straight off a zmq socket from a ServiceClientConnection.
     """
     logging.debug("parse_service_request: %s" % msg)
-    (sender, conn_id, request_timestamp, msg_passphrase, 
+    fields = (sender, conn_id, request_timestamp, msg_passphrase, 
     origin_sender_id, origin_conn_id, origin_out_addr, 
     path, method, rest) = msg.strip().split(' ', 9)
-
-    conn_id = parse_msgstring(conn_id)[0]
-    request_timestamp = parse_msgstring(request_timestamp)[0]
-    msg_passphrase = parse_msgstring(msg_passphrase)[0]
-    origin_sender_id = parse_msgstring(origin_sender_id)[0]
-    origin_conn_id = parse_msgstring(origin_conn_id)[0]
-    origin_out_addr = parse_msgstring(origin_out_addr)[0]
-    path = parse_msgstring(path)[0]
-    method = parse_msgstring(method)[0]
-    
-    if msg_passphrase != passphrase:
-        raise Exception('Unknown service identity! (%s != %s)' % (str(msg_passphrase),str(passphrase)))
-
-    arguments, body = parse_msgstring(rest)
-    headers, body = parse_msgstring(rest)
-    body = parse_msgstring(body)[0]
-
+    # first field is not tnetstring, no need to do anything
+    # last is group of tnetstrings, will handle after
+    i=1
+    for field in fields[1:-1]:
+        fields[i] = t_parse(field)[0]
+        i+=1
+    # our minimal "security" 
+    if fields[3] != passphrase:
+        raise Exception('Unknown service identity! (%s != %s)' % (str(fields[3]),str(passphrase)))
+    # handle the "body" of the message or last parsed field
+    arguments, rest = t_parse(rest)
+    headers, rest = t_parse(rest)
+    body = t_parse(rest)[0]
     arguments = json.loads(arguments) if len(arguments) > 0 else {}
     headers = json.loads(headers) if len(headers) > 0 else {}
     body = json.loads(body) if len(body) > 0 else {}
-
+    # create our sevice request object
     r = ServiceRequest(**{
-            "sender": sender,
-            "conn_id": conn_id,
-            "origin_sender_id": sender,
-            "origin_conn_id": origin_conn_id,
-            "origin_out_addr": origin_out_addr,
-            "path": path,
-            "method": method,
+            "sender": fields[0],
+            "conn_id": fields[1],
+            "request_timestamp": fields[2],
+            "origin_sender_id": fields[4],
+            "origin_conn_id": fields[5],
+            "origin_out_addr": fields[6],
+            "path": fields[7],
+            "method": fields[8],
             "arguments": arguments,
             "headers": headers,
             "body": body,
-            "request_timestamp": request_timestamp,
     })
-
     return r
 
 
@@ -180,34 +186,27 @@ def parse_service_response(msg, passphrase):
     """
     logging.debug("parse_service_response: %s" % msg)
 
-    (sender, conn_id, request_timestamp, start_timestamp, end_timestamp, 
+    fields = (sender, conn_id, request_timestamp, start_timestamp, end_timestamp, 
     msg_passphrase, origin_sender_id, origin_conn_id, origin_out_addr, 
     path, method, rest) = msg.split(' ', 11)
-    
-    conn_id = parse_msgstring(conn_id)[0]
-    request_timestamp = parse_msgstring(request_timestamp)[0]
-    start_timestamp = parse_msgstring(start_timestamp)[0]
-    end_timestamp = parse_msgstring(end_timestamp)[0]
-    msg_passphrase = parse_msgstring(msg_passphrase)[0]
-    origin_sender_id = parse_msgstring(origin_sender_id)[0]
-    origin_conn_id = parse_msgstring(origin_conn_id)[0]
-    origin_out_addr = parse_msgstring(origin_out_addr)[0]
-    path = parse_msgstring(path)[0]
-    method = parse_msgstring(method)[0]
-    
-    if msg_passphrase != passphrase:
-        raise Exception('Unknown service identity! (%s != %s)' % (str(msg_passphrase),str(passphrase)))
-
-    (status_code, rest) = parse_msgstring(rest)
-    (status_msg, rest) = parse_msgstring(rest)
-    (arguments, rest) = parse_msgstring(rest)
-    (headers, rest) = parse_msgstring(rest)
-    (body, rest) = parse_msgstring(rest)
-
+    # first field is not tnetstring, no need to do anything
+    # last is group of tnetstrings, will handle after
+    i=1
+    for field in fields[1:-1]:
+        fields[i] = t_parse(field)[0]
+        i+=1   
+    # our minimal "security"    
+    if fields[5] != passphrase:
+        raise Exception('Unknown service identity! (%s != %s)' % (str(fields[5]),str(passphrase)))
+    # deal with the "body" or rest that is group of tnetstrings
+    (status_code, rest) = t_parse(rest)
+    (status_msg, rest) = t_parse(rest)
+    (arguments, rest) = t_parse(rest)
+    (headers, rest) = t_parse(rest)
+    (body, rest) = t_parse(rest)
     logging.debug("arguments: %s" % arguments)
     logging.debug("headers: %s" % headers)
     logging.debug("body: %s" % body)
-
     arguments = json.loads(arguments) if len(arguments) > 0 else {}
     headers = json.loads(headers) if len(headers) > 0 else {}
     if body[0] == "{":
@@ -216,22 +215,23 @@ def parse_service_response(msg, passphrase):
         body = {
             "RETURN_DATA": body,
         }
-
+    # create our service response
     service_response = ServiceResponse(**{
-        "sender": sender, 
-        "conn_id": conn_id, 
-        "path": path, 
-        "method": method, 
-        "origin_conn_id": origin_conn_id, 
-        "origin_out_addr": origin_out_addr, 
+        "sender": fields[0], 
+        "conn_id": fields[1], 
+        "request_timestamp": fields[2],
+        "start_timestamp": fields[3],
+        "end_timestamp": fields[4],
+        "origin_sender_id": fields[6], 
+        "origin_conn_id": fields[7], 
+        "origin_out_addr": fields[8], 
+        "path": fields[9], 
+        "method": fields[10], 
         "status_code": int(status_code), 
         "status_msg": status_msg,
         "arguments": arguments, 
         "headers": headers, 
         "body": body, 
-        "request_timestamp": request_timestamp,
-        "start_timestamp": start_timestamp,
-        "end_timestamp": end_timestamp,
     })
     return service_response
 
@@ -240,11 +240,12 @@ class ServiceRequest(Document):
     """Class used to construct a Brubeck service request message.
     Both the client and the server use this.
     """
-    # this is set by the send call in the client connection
+    # set by the send call in the client connection
     sender = StringField(required=True)
-    # this is set by the send call in the client connection
+    # set by the send call in the client connection
     conn_id = StringField(required=True)
-    # Not sure if this is the socket_id, but it is used to return the message to the originator
+    # set by send call in client connection
+    # used to return the message to the originator
     origin_sender_id = StringField(required=True)
     # This is the connection id used by the originator and is needed for Mongrel2
     origin_conn_id  = StringField(required=True)
@@ -252,11 +253,11 @@ class ServiceRequest(Document):
     origin_out_addr  = StringField(required=True)
     # used to route the request
     path = StringField(required=True)
-    # used to route the request to teh proper method of the handler
+    # used to route the request to the proper method of the handler
     method = StringField(required=True)
     # a dict, used to populat an arguments dict for use within the method
     arguments = DictField(required=False)
-    # a dict, right now only METHOD is required and must be one of: ['get', 'post', 'put', 'delete','options', 'connect', 'response', 'request']
+    # a dict, these get passed to the method called (use body for complex or large objects)
     headers = DictField(required=False)
     # a dict, this can be whatever you need it to be to get the job done.
     body = DictField(required=True)
@@ -320,14 +321,9 @@ class ServiceConnection(Mongrel2Connection):
         self.zmq = zmq
         self.passphrase = passphrase
 
-        #out_sock.setsockopt(zmq.IDENTITY, self.sender_id)
-
-        #in_sock.connect(pull_addr)
-
     def process_message(self, application, message):
         """Function for coroutine that looks at the message, determines which handler will
         be used to process it, and then begins processing.
-    
         The application is responsible for handling misconfigured routes.
         """
         
@@ -347,7 +343,6 @@ class ServiceConnection(Mongrel2Connection):
         
         application.msg_conn.send(service_response)
 
-
     def send(self, service_response):
         """uuid = unique ID that both the client and server need to match
            conn_id = connection id from this request needed to wake up handler on response
@@ -360,29 +355,29 @@ class ServiceConnection(Mongrel2Connection):
 
         service_response.end_timestamp = int(time.time() * 1000)
 
-        header = "%s %d:%s %d:%s %d:%s %d:%s %d:%s %d:%s %d:%s %d:%s %d:%s %d:%s" % ( service_response.sender,
-            len(str(service_response.conn_id)), str(service_response.conn_id),
-            len(str(service_response.request_timestamp)), str(service_response.request_timestamp),
-            len(str(service_response.start_timestamp)), str(service_response.start_timestamp),
-            len(str(service_response.end_timestamp)), str(service_response.end_timestamp),
-            len(self.passphrase), self.passphrase,
-            len(service_response.origin_sender_id), service_response.origin_sender_id,
-            len(str(service_response.origin_conn_id)), str(service_response.origin_conn_id),
-            len(service_response.origin_out_addr), service_response.origin_out_addr,
-            len(service_response.path), service_response.path,
-            len(service_response.method), service_response.method,
+        header = "%s %s %s %s %s %s %s %s %s %s %s" % ( service_response.sender,
+            t(service_response.conn_id),
+            t(service_response.request_timestamp),
+            t(service_response.start_timestamp),
+            t(service_response.end_timestamp),
+            t(self.passphrase),
+            t(service_response.origin_sender_id),
+            t(service_response.origin_conn_id),
+            t(service_response.origin_out_addr),
+            t(service_response.path),
+            t(service_response.method),
         )
         status_code = to_bytes(str(json.dumps(service_response.status_code)))
         status_msg = to_bytes(json.dumps(service_response.status_msg))
         arguments = to_bytes(json.dumps(service_response.arguments))
         headers = to_bytes(json.dumps(service_response.headers))
         body = to_bytes(json.dumps(service_response.body))
-        msg = '%s %d:%s%d:%s%d:%s%d:%s%d:%s' % (header,
-            len(status_code), status_code,
-            len(status_msg), status_msg,
-            len(arguments), arguments,
-            len(headers), headers,
-            len(body), body,
+        msg = '%s %s%s%s%s%s' % (header,
+            t(status_code),
+            t(status_msg),
+            t(arguments),
+            t(headers),
+            t(body),
         )
         
         logging.debug("ServiceConnection send (%s) : \"%s\"" % (service_response.sender, msg))
@@ -454,7 +449,7 @@ class ServiceClientConnection(ServiceConnection):
         returns a tuple containing 1) the response object created 
             from parsing the message and 2) the handlers return value
         """
-        logging.debug("service_client_process_message")
+        logging.debug("service_client_process_message service_passphrase: %s" % service_passphrase)
         service_response = parse_service_response(message, service_passphrase)
     
         logging.debug(
@@ -480,23 +475,21 @@ class ServiceClientConnection(ServiceConnection):
         """
         service_req.conn_id = uuid4().hex
 
-
-        header = "%s %d:%s %d:%s %d:%s %d:%s %d:%s %d:%s %d:%s %d:%s" % (
-            self.sender_id,
-            len(str(service_req.conn_id)), str(service_req.conn_id),
-            len(str(service_req.request_timestamp)), str(service_req.request_timestamp),
-            len(str(self.passphrase)), str(self.passphrase),
-            len(service_req.origin_sender_id),service_req.origin_sender_id,
-            len(str(service_req.origin_conn_id)), str(service_req.origin_conn_id),
-            len(service_req.origin_out_addr), service_req.origin_out_addr,
-            len(service_req.path), service_req.path,
-            len(service_req.method), service_req.method,
+        header = "%s %s %s %s %s %s %s %s %s" % (self.sender_id, 
+            t(service_req.conn_id), 
+            t(service_req.request_timestamp),
+            t(self.passphrase),
+            t(service_req.origin_sender_id),
+            t(service_req.origin_conn_id),
+            t(service_req.origin_out_addr),
+            t(service_req.path),
+            t(service_req.method),
         )
         arguments = to_bytes(json.dumps(service_req.arguments))
         headers = to_bytes(json.dumps(service_req.headers))
         body = to_bytes(json.dumps(service_req.body))
 
-        msg = ' %s %d:%s%d:%s%d:%s' % (header, len(arguments), arguments,len(headers), headers, len(body), body)
+        msg = ' %s %s%s%s' % (header, t(arguments),t(headers), t(body))
         logging.debug(
             "ServiceClientConnection send (%s:%s): %s" % (self.sender_id, service_req.conn_id, msg)
         )
@@ -505,7 +498,7 @@ class ServiceClientConnection(ServiceConnection):
         return service_req
 
     def close(self):
-        # we only have one socket, close it
+        """close our connections"""
         self.out_sock.close()
         self.in_sock.close()
 
@@ -559,7 +552,7 @@ class ServiceMessageHandler(MessageHandler):
                 mef = self.message.method.lower()  # M-E-T-H-O-D man!
 
                 # Find function mapped to method on self
-                if (mef in SERVICE_METHODS):
+                if (mef in _SERVICE_METHODS):
                     fun = getattr(self, mef, self.unsupported)
                 else:
                     fun = self.unsupported
@@ -596,33 +589,31 @@ def service_response_listener(application, service_addr,  service_resp_addr, ser
     """Function runs in a coroutine, one listener for each server per handler.
     Once running, it stays running until the brubeck instance is killed."""
     ##try:
+    logging.debug("service_response_listener: service_passphrase 1: %s" % service_passphrase);
     while True:
+        logging.debug("service_response_listener: service_passphrase 2: %s" % service_passphrase);
         logging.debug("service_response_listener waiting");
         raw_response = service_conn.recv()
+        logging.debug("service_response_listener: service_passphrase 3: %s" % service_passphrase);
         logging.debug("service_response_listener recv(): %s" % raw_response);
         # just send raw message to connection client
         sender, conn_id = raw_response.split(' ', 1)
-        
-        conn_id = parse_msgstring(conn_id)[0]
+        logging.debug("service_response_listener: service_passphrase 4: %s" % service_passphrase);        
+        conn_id = t_parse(conn_id)[0]
+        logging.debug("service_response_listener: service_passphrase 5: %s" % service_passphrase);        
         if (
             not _notify_waiting_service_client(application, service_addr, conn_id, raw_response)
             and handle
         ):
             # Call our handler
-            (response, handler_response) = service_conn.process_message( 
+            logging.debug("service_response_listener: calling process_message service_passphrase 6: %s" % service_passphrase);
+            (response, handler_response) = service_conn.process_message(
                 application,
                 raw_response,
                 service_addr,
                 service_passphrase,
                 handle
             )
-            
-    ##except:
-    ##    raise
-    ##finally:
-    ##    # once a listener dies, de-register the service, it's useless
-    ##    application.unregister_service(service_addr)
-
     
 class ServiceClientMixin(object):
     """Class adds the functionality to any handler to send messages to a ServiceConnection
@@ -676,8 +667,8 @@ class ServiceClientMixin(object):
         }
         return ServiceRequest(**data)
     
-    def send_service_request(self, service_addr, service_req):
-        """do some work and wait for the results of the response to handle the response from the service
+    def send_service_request(self, service_addr, service_req, handle=True):
+        """do some work and wait for the results of the response to handler_response the response from the service
         blocking, waits for handled result.
         """
         service_req = _send_service_request(self.application, service_addr, service_req)
@@ -687,7 +678,7 @@ class ServiceClientMixin(object):
         
         (response, handler_response) = service_conn.process_message( 
             self.application, raw_response, 
-            self, service_addr
+            service_addr, service_conn.passphrase, handle,
         )
 
         return (response, handler_response)
@@ -797,6 +788,7 @@ def _service_is_registered(application, service_addr):
 def _register_service(application, service_addr, service_resp_addr, service_passphrase, handle=True):
     """ Create and store a connection and it's listener and waiting_clients queue.
     """
+    logging.debug("service_passphrase: %s" % service_passphrase)
     assure_resource(application)
     key = create_resource_key(service_addr, _SERVICE_RESOURCE_TYPE)        
     if not is_resource_registered(key):
