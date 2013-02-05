@@ -6,6 +6,7 @@ from brubeckservice.base import (
     ServiceConnection,
     ServiceMessageHandler,
     coro_sleep,
+    service_registration,
 )
 from brubeck.templating import (
     Jinja2Rendering,
@@ -30,8 +31,20 @@ class SlowEchoServiceHandler(ServiceMessageHandler):
 ##
 ## runtime configuration
 ##
+
+# these must match the values defined on on the service_client
+service_registration_addr = 'ipc://run/service_registration'
+service_registration_passphrase='my_shared_registration_secret'
+service_id = 'run_slow' # the id to call service by in client
+
+# these are all defined here
+service_addr = 'ipc://run/slow'
+service_response_addr = 'ipc://run/slow_response'
+service_passphrase = 'my_shared_secret'
+heartbeat_addr = 'ipc://run/heartbeat'
+
 config = {
-    'msg_conn': ServiceConnection('ipc://run/slow', 'ipc://run/slow_response', 'my_shared_secret'),
+    'msg_conn': ServiceConnection(service_addr, service_response_addr, service_passphrase),
     'handler_tuples': [ ## Set up our routes
         # Handle our service responses
         (r'^/service/slow', SlowEchoServiceHandler),
@@ -46,6 +59,9 @@ config = {
 ## get us started!
 ##
 app = Brubeck(**config)
+
+service_registration(app, service_registration_addr, service_registration_passphrase, 
+    service_id, service_addr, service_response_addr, service_passphrase, heartbeat_addr)
 ## start our server to handle requests
 if __name__ == "__main__":
     app.run()

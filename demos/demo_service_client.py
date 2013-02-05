@@ -7,20 +7,29 @@ from brubeck.request_handling import (
     WebMessageHandler, 
     Brubeck,
     render,
+    coro_spawn,
 )
 from brubeckservice.base import (
     ServiceClientMixin,
     ServiceMessageHandler,
     coro_sleep,
+    service_client_init,
+    HANDLE_RESPONSE,
+    DO_NOT_HANDLE_RESPONSE,
 )
 from brubeck.templating import (
     Jinja2Rendering,
     load_jinja2_env,
 )
 # some static data for testing
-service_addr = "ipc://run/slow"
-service_resp_addr = "ipc://run/slow_response"
-service_passphrase = "my_shared_secret"
+service_registration_passphrase = "my_shared_registration_secret"
+service_registration_addr = "ipc://run/service_registration"
+service_client_heartbeat_addr = "ipc://run/service_client_heartbeat"
+service_id = 'run_slow'
+service_path = ""
+#service_addr = "ipc://run/slow"
+#service_resp_addr = "ipc://run/slow_response"
+#service_passphrase = "my_shared_secret"
 service_path = '/service/slow'
 request_headers = {}
 request_method = 'request'
@@ -49,16 +58,17 @@ class CallServiceAsyncHandler(
 
     def get(self):
         # register our resource
-        self.register_service(service_addr, service_resp_addr, service_passphrase)
+        #self.register_service(service_addr, service_resp_addr, service_passphrase)
         # create a servicerequest
         service_request = self.create_service_request(
             service_path,
+            DO_NOT_HANDLE_RESPONSE,
             request_method,
             async_request_arguments
         )
 
         ## Async
-        self.send_service_request_nowait(service_addr, service_request)
+        self.send_service_request_nowait(service_id, service_request)
 
         # now return to client whatever you want
         self.set_status(200)
@@ -76,16 +86,17 @@ class CallServiceSyncHandler(
 
     def get(self):
         # register our service, if exist nothing happens
-        self.register_service(service_addr, service_resp_addr, service_passphrase)
+        #self.register_service(service_addr, service_resp_addr, service_passphrase)
         # create a servicerequest
         service_request = self.create_service_request(
             service_path,
+            DO_NOT_HANDLE_RESPONSE,
             request_method,
             sync_request_arguments
         )
 
         ## Sync
-        (response, handler_response) = self.send_service_request(service_addr, service_request)
+        (response, handler_response) = self.send_service_request(service_id, service_request)
 
         # now return to client what you got back
         self.set_status(200)
@@ -133,6 +144,10 @@ config = {
 ## get us started!
 ##
 app = Brubeck(**config)
+
+# Start our registration listener
+service_client_init(app, service_registration_addr, service_registration_passphrase, 
+    service_client_heartbeat_addr)
     
 ## start our server to handle requests
 if __name__ == "__main__":

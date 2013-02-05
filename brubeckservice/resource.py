@@ -32,12 +32,12 @@ def assure_resource(application=None):
 
 def is_resource_registered(key):
     """ Check if a resource is registered.""" 
-    logging.debug("Is %s resource registered?" % key)
+    #logging.debug("Is %s resource registered?" % key)
     if key in _resources:
-        logging.debug("Yup")
+        #logging.debug("Yup")
         return True
     else:
-        logging.debug("Nope")
+        #logging.debug("Nope")
         return False
 
 def register_resource(resource, key=None):
@@ -80,15 +80,22 @@ def get_resource(key):
     and return resource if found, None if not found.
     """ 
     if key in _resources:
-        logging.debug("get_resource found resource %s" % key)
+        #logging.debug("get_resource found resource %s" % key)
         return _resources[key]
     else:
         logging.debug("get_resource didn't find resource %s" % key)
         return None
 
+def get_resource_keys():
+    """ get our list of resources.
+    """ 
+    if _resources is None:
+        return []
+    return _resources.keys()
+                    
 def create_resource_key(name, resource_type=None):
     """used as the key when a resource is stored"""
-    return ((resource_type if resource_type is not None else '') +
+    return "%s %s" % ((resource_type if resource_type is not None else ''),
             (name if name is not None else ''))
 
 

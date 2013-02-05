@@ -36,8 +36,8 @@ from resource import (
     unregister_resource,
     get_resource,
     create_resource_key,
+    get_resource_keys,
 )
-from brubeck.connections import (load_zmq, load_zmq_ctx)
 
 #########################################################
 ### Attempt to setup gevent wrappers for sleep and events
@@ -82,7 +82,12 @@ _SERVICE_METHODS = ['get', 'post', 'put', 'delete',
 _DEFAULT_SERVICE_REQUEST_METHOD = 'request'
 _DEFAULT_SERVICE_RESPONSE_METHOD = 'response'
 _SERVICE_RESOURCE_TYPE = 'SERVICE'
-            
+_DEFAULT_HEARTBEAT_INTERVAL = 3 # time in seconds between heartbeats
+_ALLOWED_MISSED_HEARTBEATS = 1 # missed heartbeats before listener killed
+_DEFAULT_SERVICE_CLIENT_TIMEOUT = 5 # seconds before service is reregistered    
+_DEFAULT_SERVICE_TIMEOUT = 5 # seconds before service is unregistered on client       
+HANDLE_RESPONSE = 1
+DO_NOT_HANDLE_RESPONSE = 0
 #################################
 ## Request and Response stuff 
 #################################
@@ -101,10 +106,10 @@ def t_parse(field_text):
             and data is the text to get the first n chars from
         returns the a tuple containing the value and whatever remains
     """
-    logging.debug("t_parse: %s" % field_text)
+    #logging.debug("t_parse: %s" % field_text)
     field_data = field_text.split(':', 1)
     expected_len = int(field_data[0])
-    logging.debug("expected_len: %s" % expected_len)
+    #logging.debug("expected_len: %s" % expected_len)
     if expected_len > 0:
         field_value = field_data[1]
         value = field_value[0:expected_len]
@@ -120,8 +125,8 @@ def parse_service_request(msg, passphrase):
     """
     logging.debug("parse_service_request: %s" % msg)
     fields = (sender, conn_id, request_timestamp, msg_passphrase, 
-    origin_sender_id, origin_conn_id, origin_out_addr, 
-    path, method, rest) = msg.strip().split(' ', 9)
+    origin_sender_id, origin_conn_id, origin_out_addr, handle_response, 
+    path, method, rest) = msg.strip().split(' ', 10)
     # first field is not tnetstring, no need to do anything
     # last is group of tnetstrings, will handle after
     i=1
@@ -146,8 +151,9 @@ def parse_service_request(msg, passphrase):
             "origin_sender_id": fields[4],
             "origin_conn_id": fields[5],
             "origin_out_addr": fields[6],
-            "path": fields[7],
-            "method": fields[8],
+            "handle_response": fields[7],
+            "path": fields[8],
+            "method": fields[9],
             "arguments": arguments,
             "headers": headers,
             "body": body,
@@ -168,6 +174,7 @@ def create_service_response(service_request, handler, method=_DEFAULT_SERVICE_RE
         "origin_sender_id": service_request.origin_sender_id,
         "origin_conn_id": service_request.origin_conn_id,
         "origin_out_addr": service_request.origin_out_addr,
+        "handle_response": service_request.handle_response,
         "path": service_request.path,
         "method": method,
         "arguments": arguments,
@@ -187,8 +194,8 @@ def parse_service_response(msg, passphrase):
     logging.debug("parse_service_response: %s" % msg)
 
     fields = (sender, conn_id, request_timestamp, start_timestamp, end_timestamp, 
-    msg_passphrase, origin_sender_id, origin_conn_id, origin_out_addr, 
-    path, method, rest) = msg.split(' ', 11)
+    msg_passphrase, origin_sender_id, origin_conn_id, origin_out_addr, handle_response, 
+    path, method, rest) = msg.split(' ', 12)
     # first field is not tnetstring, no need to do anything
     # last is group of tnetstrings, will handle after
     i=1
@@ -225,8 +232,9 @@ def parse_service_response(msg, passphrase):
         "origin_sender_id": fields[6], 
         "origin_conn_id": fields[7], 
         "origin_out_addr": fields[8], 
-        "path": fields[9], 
-        "method": fields[10], 
+        "handle_response": fields[9],
+        "path": fields[10],
+        "method": fields[11], 
         "status_code": int(status_code), 
         "status_msg": status_msg,
         "arguments": arguments, 
@@ -251,6 +259,8 @@ class ServiceRequest(Document):
     origin_conn_id  = StringField(required=True)
     # This is the socket address for the reply to the client
     origin_out_addr  = StringField(required=True)
+    # flag to see if response tries to call handler (1=yes)
+    handle_response = StringField(required=True)
     # used to route the request
     path = StringField(required=True)
     # used to route the request to the proper method of the handler
@@ -306,7 +316,7 @@ class ServiceConnection(Mongrel2Connection):
         self.sender_id = uuid4().hex
         self.in_addr = svc_addr
         self.out_addr = svc_resp_addr
-
+        self.last_response_sender_id = None
 
         # the request (in_sock) is received from a DEALER socket (round robin)
         self.in_sock = ctx.socket(zmq.PULL)
@@ -320,15 +330,12 @@ class ServiceConnection(Mongrel2Connection):
 
         self.zmq = zmq
         self.passphrase = passphrase
-
+        
     def process_message(self, application, message):
         """Function for coroutine that looks at the message, determines which handler will
         be used to process it, and then begins processing.
         The application is responsible for handling misconfigured routes.
         """
-        
-        # see if we have initialize _resource attribute on application
-        assure_resource(application)
 
         service_request = parse_service_request(message, application.msg_conn.passphrase)
 
@@ -350,12 +357,22 @@ class ServiceConnection(Mongrel2Connection):
            origin_conn_id = the connection id from the original request
            origin_out_addr = the socket address that expects the final result
            msg = the payload (a JSON object)
+           handle_response = call a handler on response processing
            path = the path used to route to the proper response handler
         """
 
         service_response.end_timestamp = int(time.time() * 1000)
+        
+        # check who we last sent a response to
+        if self.last_response_sender_id is None:
+            # first time, set it
+            self.last_response_sender_id = service_response.sender
+        elif not service_response.sender == self.last_response_sender_id:
+            # Our single client restarted, reconnect
+            self.out_sock.connect(self.out_addr)
+            self.last_response_sender_id = service_response.sender
 
-        header = "%s %s %s %s %s %s %s %s %s %s %s" % ( service_response.sender,
+        header = "%s %s %s %s %s %s %s %s %s %s %s %s" % ( service_response.sender,
             t(service_response.conn_id),
             t(service_response.request_timestamp),
             t(service_response.start_timestamp),
@@ -364,6 +381,7 @@ class ServiceConnection(Mongrel2Connection):
             t(service_response.origin_sender_id),
             t(service_response.origin_conn_id),
             t(service_response.origin_out_addr),
+            t(service_response.handle_response),
             t(service_response.path),
             t(service_response.method),
         )
@@ -390,18 +408,20 @@ class ServiceConnection(Mongrel2Connection):
     def recv(self):
         """Receives a message from a ServiceClientConnection.
         """
-        # blocking recv call
-        logging.debug("recv waiting...")
-        zmq_msg = self.in_sock.recv()
-        logging.debug("...recv got")
-        # if we are multipart, keep getting our message until we are done
-        while self.in_sock.getsockopt(self.zmq.RCVMORE):
-            logging.debug("...recv getting more")
-            zmq_msg += self.in_sock.recv()
-        logging.debug("...recv got all")
+        try:
+            # blocking recv call
+            logging.debug("recv waiting...")
+            zmq_msg = self.in_sock.recv()
+            logging.debug("...recv got")
+            # if we are multipart, keep getting our message until we are done
+            while self.in_sock.getsockopt(self.zmq.RCVMORE):
+                logging.debug("...recv getting more")
+                zmq_msg += self.in_sock.recv()
+            logging.debug("...recv got all")
         
-        return zmq_msg
-
+            return zmq_msg
+        except Exception, e:
+            logging.error(e, exc_info=True)
 
 class ServiceClientConnection(ServiceConnection):
     """Class is specific to communicating with a ServiceConnection.
@@ -439,8 +459,7 @@ class ServiceClientConnection(ServiceConnection):
         application,
         message,
         service_addr,
-        service_passphrase,
-        handle=True
+        service_passphrase
     ):
         """This coroutine looks at the message, determines which handler will
         be used to process it, and then begins processing.
@@ -456,9 +475,9 @@ class ServiceClientConnection(ServiceConnection):
             "service_client_process_message service_response: %s" % service_response
         )
         
-        logging.debug("service_client_process_message handle: %s" % handle)
+        logging.debug("service_client_process_message handle_response: %s" % service_response.handle_response)
         logging.debug("service_client_process_message service_response.path: %s" % service_response.path)
-        if handle:
+        if service_response.handle_response == "1":
             handler = application.route_message(service_response)
             
             handler.set_status(service_response.status_code,  service_response.status_msg)
@@ -475,13 +494,14 @@ class ServiceClientConnection(ServiceConnection):
         """
         service_req.conn_id = uuid4().hex
 
-        header = "%s %s %s %s %s %s %s %s %s" % (self.sender_id, 
+        header = "%s %s %s %s %s %s %s %s %s %s" % (self.sender_id, 
             t(service_req.conn_id), 
             t(service_req.request_timestamp),
             t(self.passphrase),
             t(service_req.origin_sender_id),
             t(service_req.origin_conn_id),
             t(service_req.origin_out_addr),
+            t(service_req.handle_response),
             t(service_req.path),
             t(service_req.method),
         )
@@ -489,7 +509,7 @@ class ServiceClientConnection(ServiceConnection):
         headers = to_bytes(json.dumps(service_req.headers))
         body = to_bytes(json.dumps(service_req.body))
 
-        msg = ' %s %s%s%s' % (header, t(arguments),t(headers), t(body))
+        msg = '%s %s%s%s' % (header, t(arguments),t(headers), t(body))
         logging.debug(
             "ServiceClientConnection send (%s:%s): %s" % (self.sender_id, service_req.conn_id, msg)
         )
@@ -585,36 +605,282 @@ class ServiceMessageHandler(MessageHandler):
         finally:
             self.on_finish()
 
-def service_response_listener(application, service_addr,  service_resp_addr, service_conn, service_passphrase, handle=True):
+def service_response_listener(application, service_id, service_addr,  service_resp_addr, service_conn, service_passphrase):
     """Function runs in a coroutine, one listener for each server per handler.
     Once running, it stays running until the brubeck instance is killed."""
-    ##try:
-    logging.debug("service_response_listener: service_passphrase 1: %s" % service_passphrase);
+    try:
+        logging.debug("service_response_listener: service_passphrase: %s" % service_passphrase)
+        loop = True
+        while loop == True:
+            logging.debug("service_response_listener waiting")
+            raw_response = service_conn.recv()
+            logging.debug("service_response_listener recv(): %s" % raw_response)
+            # just send raw message to connection client
+            if raw_response is None:
+                loop = False
+            else:
+                sender, conn_id = raw_response.split(' ', 1)
+                conn_id = t_parse(conn_id)[0]
+                _notify_waiting_service_client(application, service_id, conn_id, raw_response)
+                # Call our handler
+                (response, handler_response) = service_conn.process_message(
+                    application,
+                    raw_response,
+                    service_addr,
+                    service_passphrase,
+                )
+    except Exception, e:
+        logging.error(e, exc_info=True)
+
+                    
+def service_client_init(application, service_registration_addr, service_registration_passphrase, 
+    service_client_heartbeat_addr, service_client_heartbeat_interval = _DEFAULT_HEARTBEAT_INTERVAL):
+    """Starts everything needed for a brubeck app to be a service_client"""
+    coro_spawn(service_registration_listener, application, 
+        service_registration_passphrase, service_registration_addr, 
+        service_client_heartbeat_addr)
+    coro_spawn(service_client_heartbeat, application, 
+        service_client_heartbeat_addr, service_registration_passphrase)
+    assure_resource(application)
+
+
+#######################################
+## Service registration ZMQ functions
+#######################################
+def service_registration(application, service_registration_addr, service_registration_passphrase, 
+    service_id, service_addr, service_response_addr, service_passphrase, 
+    service_heartbeat_addr, service_heartbeat_timeout=_DEFAULT_SERVICE_CLIENT_TIMEOUT, is_reregistration = False):
+    """Function is called once on service startup to 
+    register service with the remote Brubeck service client.
+    """
+    logging.debug("service_registration: (service_registration_addr, service_registration_passphrase): (%s, %s)" % 
+        (service_registration_addr, service_registration_passphrase))
+    # Just start our zmq socket here, no reason for abstraction
+    zmq = load_zmq()
+    ctx = load_zmq_ctx()
+
+    # the request (in_sock) is received from a DEALER socket (round robin)
+    service_registration_sock = ctx.socket(zmq.REQ)
+    service_registration_sock.connect(service_registration_addr)
+    print("Connected service registration REP socket %s" % (service_registration_addr))
+    msg = "%s %s %s %s %s %s %s" % (application.msg_conn.sender_id, t(service_registration_passphrase), 
+        t(service_id), t(service_addr), t(service_response_addr), t(service_passphrase), 
+        t(service_heartbeat_addr))
+    logging.debug("service_registration sending request");
+    service_registration_sock.send(to_bytes(msg))
+    logging.debug("service_registration waiting for response");
+    raw_registration_response = service_registration_sock.recv()    
+    logging.debug("service_registration recv(): %s" % raw_registration_response)
+
+    fields = (sender_id, svc_registration_passphrase, svc_client_heartbeat_addr) = (
+        raw_registration_response.split(' ', 2))
+    i=1
+    for field in fields[1:]:
+        fields[i] = t_parse(field)[0]
+        i+=1   
+    # our minimal "security"    
+    if fields[1] != service_registration_passphrase:
+        # just log the breach
+        logging.debug('Unknown service registration passphrase! (%s != %s)' % (str(fields[1]),service_registration_passphrase))
+        return False;
+    elif fields[1] == "0":
+        logging.debug("registration failed")
+        return False
+    else:
+        # Start our heartbeat to ping service client
+        if is_reregistration == False:
+            coro_spawn(service_heartbeat, application, 
+                service_heartbeat_addr, service_id, service_passphrase)
+
+        # Start our heartbeat listener for service client pings
+        coro_spawn(service_client_heartbeat_listener, application, sender_id,
+            service_registration_addr, service_registration_passphrase, 
+            service_id, service_addr, service_response_addr, service_passphrase, 
+            service_heartbeat_addr, fields[2], service_heartbeat_timeout)
+
+def service_registration_listener(application, service_registration_passphrase, service_registration_addr, 
+    service_client_heartbeat_addr):
+    """Function runs in a coroutine, one registration listener for each brubeck instance
+    When a message is received the service is registered and a listener is started.
+    """
+    logging.debug("service_registration_listener: (service_registration_addr, service_registration_passphrase): (%s, %s)" % 
+        (service_registration_addr, service_registration_passphrase))
+    # Just start our zmq socket here, no reason for abstraction
+    zmq = load_zmq()
+    ctx = load_zmq_ctx()
+
+    # the request (in_sock) is received from a DEALER socket (round robin)
+    service_registration_sock = ctx.socket(zmq.REP)
+    service_registration_sock.bind(service_registration_addr)
+    print("Connected service registration REP socket %s" % (service_registration_addr))
+
     while True:
-        logging.debug("service_response_listener: service_passphrase 2: %s" % service_passphrase);
-        logging.debug("service_response_listener waiting");
-        raw_response = service_conn.recv()
-        logging.debug("service_response_listener: service_passphrase 3: %s" % service_passphrase);
-        logging.debug("service_response_listener recv(): %s" % raw_response);
+        logging.debug("service_registration_listener waiting");
+        raw_registration_request = service_registration_sock.recv()
+        logging.debug("service_registration_listener recv(): %s" % raw_registration_request)
         # just send raw message to connection client
-        sender, conn_id = raw_response.split(' ', 1)
-        logging.debug("service_response_listener: service_passphrase 4: %s" % service_passphrase);        
-        conn_id = t_parse(conn_id)[0]
-        logging.debug("service_response_listener: service_passphrase 5: %s" % service_passphrase);        
-        if (
-            not _notify_waiting_service_client(application, service_addr, conn_id, raw_response)
-            and handle
-        ):
-            # Call our handler
-            logging.debug("service_response_listener: calling process_message service_passphrase 6: %s" % service_passphrase);
-            (response, handler_response) = service_conn.process_message(
-                application,
-                raw_response,
-                service_addr,
-                service_passphrase,
-                handle
-            )
+        fields = (sender_id, service_reg_passphrase, service_id, 
+            service_addr, service_resp_addr, service_passphrase, heartbeat_addr
+        ) = raw_registration_request.split(' ', 6)
+        i=1
+        for field in fields[1:]:
+            fields[i] = t_parse(field)[0]
+            i+=1   
+        # our minimal "security"    
+        if fields[1] != service_registration_passphrase:
+            # just log the breach
+            logging.debug('Unknown service registration passphrase! (%s != %s)' % (str(fields[1]),service_registration_passphrase))
+            msg = "%s %s" % (t(fields[1]), t(0))
+        else:
+            _register_service(application, fields[2], fields[3], fields[4], fields[5])
+            # start our heartbeat listener
+            coro_spawn(service_heartbeat_listener,
+                application, sender_id, fields[6], fields[2], fields[3], fields[5])
+            msg = "%s %s %s" % (application.msg_conn.sender_id, t(fields[1]), t(service_client_heartbeat_addr))
+        service_registration_sock.send(to_bytes(msg))
+        
+########################
+## Heartbeat functions
+########################
+def service_heartbeat(application, heartbeat_addr, service_id, service_passphrase, 
+    heartbeat_interval=_DEFAULT_HEARTBEAT_INTERVAL):
+    """Function runs in a coroutine, one heartbeat per service or service client instance.
+    When a heartbeat is sent it just continues on without a response.
+    There is a heartbeat on each side of communication.
+    """
+    logging.debug("service_heartbeat: (heartbeat_addr, heartbeat_interval): (%s, %s)" % 
+        (heartbeat_addr, heartbeat_interval))
+    # Just start our zmq socket here, no reason for abstraction
+    zmq = load_zmq()
+    ctx = load_zmq_ctx()
+
+    # the heartbeat is published on regular intervals
+    heartbeat_sock = ctx.socket(zmq.PUB)
+    heartbeat_sock.bind(heartbeat_addr)
+    print("Connected service heartbeat PUB socket %s" % (heartbeat_addr))
+
+    sender_id = application.msg_conn.sender_id
+
+    while True:
+        #logging.debug("service_heartbeat waiting: %d" % heartbeat_interval);
+        coro_sleep(heartbeat_interval)
+        msg = "%s %s %s" % (sender_id, t(service_passphrase), t(service_id))
+        heartbeat_sock.send('%s %s' % (sender_id, to_bytes(msg)))
+        #logging.debug("service_heartbeat sent: %s" % msg)
+
+def service_client_heartbeat(application, heartbeat_addr, service_registration_passphrase, 
+    heartbeat_interval=_DEFAULT_HEARTBEAT_INTERVAL):
+    """Function runs in a coroutine, one heartbeat per service or service client instance.
+    When a heartbeat is sent it just continues on without a response.
+    There is a heartbeat on each side of communication.
+    """
+    logging.debug("service_heartbeat: (heartbeat_addr, heartbeat_interval): (%s, %s)" % 
+        (heartbeat_addr, heartbeat_interval))
+    # Just start our zmq socket here, no reason for abstraction
+    zmq = load_zmq()
+    ctx = load_zmq_ctx()
+    sender_id = application.msg_conn.sender_id
+    # the heartbeat is published on regular intervals
+    heartbeat_sock = ctx.socket(zmq.PUB)
+    heartbeat_sock.bind(heartbeat_addr)
+    print("Connected service heartbeat PUB socket %s" % (heartbeat_addr))
+
+    while True:
+        #logging.debug("service_heartbeat waiting: %d" % heartbeat_interval);
+        coro_sleep(heartbeat_interval)
+        msg = "%s %s " % (sender_id, t(service_registration_passphrase))
+        heartbeat_sock.send('%s %s' % (sender_id, to_bytes(msg)))
+        #logging.debug("service_client_heartbeat sent: %s" % msg)
+        #logging.debug("heartbeat sent (addr, pass): %s,%s" % 
+        #    (heartbeat_addr, service_registration_passphrase))
+            
+def service_heartbeat_listener(application, sender_id, heartbeat_addr, service_id, service_addr, service_passphrase, 
+    service_heartbeat_timeout=_DEFAULT_SERVICE_CLIENT_TIMEOUT):
+    """Function runs in a coroutine, one heartbeat listener for each service registered.
+    When a heartbeat is received just update our service info with the most recent time.
+    """
+    ##try:
+    logging.debug("service_heartbeat_listener: (heartbeat_addr, service_addr, service_passphrase): (%s, %s, %s)" % 
+        (heartbeat_addr, service_addr, service_passphrase))
+    # Just start our zmq socket here, no reason for abstraction
+    zmq = load_zmq()
+    ctx = load_zmq_ctx()
+
+    # the request (in_sock) is received from a DEALER socket (round robin)
+    heartbeat_sock = ctx.socket(zmq.SUB)
+    heartbeat_sock.connect(heartbeat_addr)
+    heartbeat_sock.setsockopt(zmq.SUBSCRIBE, sender_id)
+    print("Connected service heartbeat SUB socket %s" % (heartbeat_addr))
+
+    # used to "timout" a recv
+    poller = zmq.Poller()
+    poller.register(heartbeat_sock, zmq.POLLIN)
     
+    loop = True
+    while loop == True:
+        #logging.debug("service_heartbeat_listener waiting");
+        socks = dict(poller.poll(service_heartbeat_timeout * 1000))
+        raw_heartbeat_response = None
+        if socks and socks.get(heartbeat_sock) == zmq.POLLIN:
+            raw_heartbeat_response = heartbeat_sock.recv()
+            #logging.debug("Socks %s: " % raw_heartbeat_response)
+            
+        if raw_heartbeat_response is None:
+            logging.debug("service_heartbeat_listener TIMEOUT")
+            # we are a timeout
+            # exit this coroutine
+            loop = False
+            #unreregister our service
+            _unregister_service(application, service_id) 
+
+
+def service_client_heartbeat_listener (application, sender_id,
+    service_registration_addr, service_registration_passphrase, 
+    service_id, service_addr, service_response_addr, service_passphrase, 
+    service_heartbeat_addr, service_client_heartbeat_addr, 
+    service_client_heartbeat_timeout=_DEFAULT_SERVICE_CLIENT_TIMEOUT):
+    """Function runs in a coroutine, one heartbeat listener for each service registered.
+    When a heartbeat is received just update our service info with the most recent time.
+    """
+    logging.debug("service_heartbeat_listener: (service_client_heartbeat_addr, service_registration_passphrase): (%s, %s)" % 
+        (service_client_heartbeat_addr, service_registration_passphrase))
+    # Just start our zmq socket here, no reason for abstraction
+    zmq = load_zmq()
+    ctx = load_zmq_ctx()
+
+    # the request (in_sock) is received from a DEALER socket (round robin)
+    heartbeat_sock = ctx.socket(zmq.SUB)
+    heartbeat_sock.connect(service_client_heartbeat_addr)
+    heartbeat_sock.setsockopt(zmq.SUBSCRIBE, sender_id)
+    print("Connected service client heartbeat SUB socket %s" % (service_client_heartbeat_addr))
+
+    # used to "timout" a recv
+    poller = zmq.Poller()
+    poller.register(heartbeat_sock, zmq.POLLIN)
+    
+    loop = True
+    while loop == True:
+        #logging.debug("service_client_heartbeat_listener waiting");
+
+        socks = dict(poller.poll(service_client_heartbeat_timeout * 1000))
+
+        raw_heartbeat_response = None
+        if socks and socks.get(heartbeat_sock) == zmq.POLLIN:
+            raw_heartbeat_response = heartbeat_sock.recv()
+            #logging.debug("Socks %s: " % raw_heartbeat_response)
+            
+        if raw_heartbeat_response is None:
+            logging.debug("service_client_heartbeat_listener TIMEOUT")
+            # we are a timeout
+            # exit this coroutine
+            loop = False
+            #reregister our service without starting the heartbeat again
+            coro_spawn(service_registration,application, 
+                service_registration_addr, service_registration_passphrase, 
+                service_id, service_addr, service_response_addr, service_passphrase, 
+                service_heartbeat_addr, service_client_heartbeat_timeout, True)
+                    
+
 class ServiceClientMixin(object):
     """Class adds the functionality to any handler to send messages to a ServiceConnection
     This must be used with a handler or something that has the following attributes:
@@ -626,15 +892,16 @@ class ServiceClientMixin(object):
     ## This is all your handlers should use
     ################################
 
-    def register_service(self, service_addr, service_resp_addr, service_passphrase, handle=True):
+    def register_service(self, service_id, service_addr, service_resp_addr, service_passphrase):
         """Public wrapper around _register_service"""
-        return _register_service(self.application, service_addr, service_resp_addr, service_passphrase, handle)
+        return _register_service(self.application, service_id, service_addr, service_resp_addr, service_passphrase)
         
-    def unregister_service(self, service_addr, service_passphrase):
+    def unregister_service(self, service_id, service_passphrase):
         """Public wrapper around _unregister_service"""
-        return _unregister_service(self.application, service_addr, service_passphrase)
+        return _unregister_service(self.application, service_id, service_passphrase)
         
-    def create_service_request(self, path, method=_DEFAULT_SERVICE_REQUEST_METHOD, arguments={}, msg={}, headers={}):
+    def create_service_request(self, path, handle_response=HANDLE_RESPONSE, 
+        method=_DEFAULT_SERVICE_REQUEST_METHOD, arguments={}, msg={}, headers={}):
         """ path - string, used to route to proper handler
             method - used to map to the proper method of the handler
             arguments - dict, used within the method call if needed
@@ -657,6 +924,7 @@ class ServiceClientMixin(object):
             # This is the socket address for the reply to the client
             "origin_out_addr": self.application.msg_conn.out_addr,
             # used to route the request
+            "handle_response": str(handle_response),
             "path": path,
             "method": method,
             "arguments": arguments,
@@ -667,30 +935,30 @@ class ServiceClientMixin(object):
         }
         return ServiceRequest(**data)
     
-    def send_service_request(self, service_addr, service_req, handle=True):
+    def send_service_request(self, service_id, service_req):
         """do some work and wait for the results of the response to handler_response the response from the service
         blocking, waits for handled result.
         """
-        service_req = _send_service_request(self.application, service_addr, service_req)
+        service_req = _send_service_request(self.application, service_id, service_req)
         conn_id = service_req.conn_id
-        raw_response = _wait(self.application, service_addr, conn_id)
-        service_conn = _get_service_conn(self.application, service_addr)
+        raw_response = _wait(self.application, service_id, conn_id)
+        service_conn = _get_service_conn(self.application, service_id)
         
         (response, handler_response) = service_conn.process_message( 
             self.application, raw_response, 
-            service_addr, service_conn.passphrase, handle,
+            service_id, service_conn.passphrase,
         )
 
         return (response, handler_response)
 
-    def send_service_request_nowait(self, service_addr, service_req):
+    def send_service_request_nowait(self, service_id, service_req):
         """defer some work, but still handle the response yourself
         non-blocking, returns immediately.
         """
-        _send_service_request(self.application, service_addr, service_req)
+        _send_service_request(self.application, service_id, service_req)
         return
 
-    def forward_to_service(self, service_addr, service_req):
+    def forward_to_service(self, service_id, service_req):
         """give up any responsability for the request, someone else will respond to the client
         non-blocking, returns immediately.
         """
@@ -700,24 +968,24 @@ class ServiceClientMixin(object):
 #############################################
 ## Functions for sending the service request
 #############################################
-def _send_service_request(application, service_addr, service_req):
+def _send_service_request(application, service_id, service_req):
     """send our message, used internally only"""
     logging.debug("sending service request")
-    service_conn = _get_service_conn(application, service_addr)
+    service_conn = _get_service_conn(application, service_id)
     return service_conn.send(service_req)
 
 
-def _get_service_info(application, service_addr):
-    if _service_is_registered(application, service_addr):
-        key = create_resource_key(service_addr, _SERVICE_RESOURCE_TYPE)
+def _get_service_info(application, service_id):
+    if _service_is_registered(application, service_id):
+        key = create_resource_key(service_id, _SERVICE_RESOURCE_TYPE)
         service_info = get_resource(key)
         return service_info
     else:
-        raise Exception("%s service not registered" % service_addr)
+        raise Exception("%s service not registered" % service_id)
 
-def _get_service_conn(application, service_addr):
+def _get_service_conn(application, service_id):
     """get the ServiceClientConnection for a service."""
-    service_info = _get_service_info(application, service_addr)
+    service_info = _get_service_info(application, service_id)
     if service_info is None:
         return None
     else:     
@@ -727,8 +995,8 @@ def _get_service_conn(application, service_addr):
 ###################################################
 ## Functions for waiting and notifying of response
 ###################################################
-def _wait(application, service_addr, conn_id):
-    """wait fro the application to create an event from the service listener"""
+def _wait(application, service_id, conn_id):
+    """wait for the application to create an event from the service listener"""
     raw_response = None
     conn_id = str(conn_id)
 
@@ -736,7 +1004,7 @@ def _wait(application, service_addr, conn_id):
     logging.debug("creating event for %s" % conn_id)
 
     e = coro_get_event()
-    waiting_events = _get_waiting_service_clients(application, service_addr)
+    waiting_events = _get_waiting_service_clients(application, service_id)
     waiting_events[conn_id] = (int(time.time()), e)
 
     logging.debug("event for %s waiting" % conn_id)
@@ -746,24 +1014,22 @@ def _wait(application, service_addr, conn_id):
 
 
     if raw_response is not None:
-        #logging.debug("process_message %s,%s,%s,%s" % (self.application, raw_response, self, service_addr))
         return raw_response
     else:
         logging.debug("NO RESULTS")
         return None
                                             
-def _get_waiting_service_clients(application, service_addr):
+def _get_waiting_service_clients(application, service_id):
     """get the waiting service clients."""
-    service_info = _get_service_info(application, service_addr)
+    service_info = _get_service_info(application, service_id)
     if service_info is None:
         return None
     else:     
         return service_info['waiting_clients']
 
-def _notify_waiting_service_client(application, service_addr, conn_id, raw_results):
+def _notify_waiting_service_client(application, service_id, conn_id, raw_results):
     """Notify waiting events if they exist."""
-    #logging.debug("NOTIFY: %s: %s (%s)" % (service_addr, conn_id, raw_results))
-    waiting_clients = _get_waiting_service_clients(application, service_addr)
+    waiting_clients = _get_waiting_service_clients(application, service_id)
     logging.debug("waiting_clients: %s" % (waiting_clients))
     conn_id = str(conn_id)
     if not waiting_clients is None and conn_id in waiting_clients:
@@ -776,59 +1042,73 @@ def _notify_waiting_service_client(application, service_addr, conn_id, raw_resul
         logging.debug("conn_id %s not found to notify." % conn_id)
         return False
 
+def _update_service_heartbeat(application, service_id):
+    """Update our hearbeat timestamp in our service_listener for the service"""
+    service_info = _get_service_info(application, service_id)
+    if not service_info is None:
+        service_info['timestamp'] = int(time.time())
+        return True
+    else:
+        logging.debug("service_info %s not found to update heartbeat (service_id):" % 
+            (service_id))
+        return False
+        
 ############################################
 ## Service registration (Resource) helpers
 ############################################
 
-def _service_is_registered(application, service_addr):
+def _service_is_registered(application, service_id):
     """ Check if a service is registered"""
-    key = create_resource_key(service_addr, _SERVICE_RESOURCE_TYPE)
+    key = create_resource_key(service_id, _SERVICE_RESOURCE_TYPE)
     return is_resource_registered(key)
 
-def _register_service(application, service_addr, service_resp_addr, service_passphrase, handle=True):
+def _register_service(application, service_id, service_addr, service_resp_addr, service_passphrase):
     """ Create and store a connection and it's listener and waiting_clients queue.
     """
     logging.debug("service_passphrase: %s" % service_passphrase)
-    assure_resource(application)
-    key = create_resource_key(service_addr, _SERVICE_RESOURCE_TYPE)        
+    key = create_resource_key(service_id, _SERVICE_RESOURCE_TYPE)        
     if not is_resource_registered(key):
         # create our service connection
-        logging.debug("register_service creating service_conn: %s" % service_addr)
+        logging.debug("register_service creating service_conn: %s:%s" % (service_id, service_addr))
             
         service_conn = ServiceClientConnection(
                         service_addr,  service_resp_addr, service_passphrase
                     )
 
         # create and start our listener
-        logging.debug("register_service starting listener: %s" % service_addr)
+        logging.debug("register_service starting listener: %s%s" % (service_id, service_addr))
         coro_spawn(
             service_response_listener,
-            application, 
+            application,
+            service_id, 
             service_addr, 
             service_resp_addr, 
             service_conn, 
-            service_passphrase,
-            handle
+            service_passphrase
         )
         # give above process a chance to start
         coro_sleep(0)
     
         # add us to the list
-        resource = {'service_conn': service_conn, 'waiting_clients': {}}
+        resource = {'service_conn': service_conn, 'waiting_clients': {}, 'timestamp': int(time.time()) }
         register_resource(resource, key)
         logging.debug("register_service success: %s" % key)
     else:
-        logging.debug("register_service ignored: %s already registered" % service_addr)
+        logging.debug("register_service ignored: %s already registered" % service_id)
     return True
+    
+def _create_service_key(service_id):
+    """create a key to register service with """
+    return create_resource_key(service_id, _SERVICE_RESOURCE_TYPE) 
 
-def _unregister_service(application, service_addr,service_passphrase):
+def _unregister_service(application, service_id):
     """ unregister a service.
     """
-    if not self._service_is_registered(service_addr):
-        logging.debug("unregister_resource ignored: %s not registered" % service_addr)
+    if not _service_is_registered(application, service_id):
+        logging.debug("unregister_resource ignored: %s not registered" % service_id)
         return False
     else:
-        service_info = _get_service_info(application, service_addr)
+        service_info = _get_service_info(application, service_id)
         service_conn = service_info['service_conn']
         waiting_clients = service_info['waiting_clients']
         service_conn.close()
@@ -836,8 +1116,8 @@ def _unregister_service(application, service_addr,service_passphrase):
             logging.debug("killing internal reply socket %s" % sock)
             sock.close()
                 
-        key = create_resource_key(service_addr, _SERVICE_RESOURCE_TYPE)    
+        key = create_resource_key(service_id, _SERVICE_RESOURCE_TYPE)    
         unregister_resource(key)
-        logging.debug("unregister_service success: %s" % service_addr)
+        logging.debug("unregister_service success: %s" % service_id)
         return True
 
