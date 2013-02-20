@@ -1,7 +1,7 @@
 """This is an abstraction for a directory of resources scoped at the application class level.
 Since a Brubeck class is generally run in it's own instance, in effect behaving like a singleton, 
 it essentially manages resource for a single Brubeck instance. 
-An example of a resource could be a Brubeck service (brubeckservice.base.BrubeckServiceInfo)"""
+An example of a resource could be a Brubeck service (brubeckservice.models.ServiceInfo)"""
 import logging
 import time
 from dictshield.document import Document
@@ -13,6 +13,7 @@ from dictshield.fields import (StringField,
 # This will be a reference to a dict stored in a property of the application 
 # class that will be added dynamically
 _resources = None
+_resource_listeners = None
 
 def assure_resource(application=None):
     """assure that our application, if it exists, has a _resources property"""
@@ -20,24 +21,25 @@ def assure_resource(application=None):
     global _resources
     if application is None:
         _resources = {}
+        _resource_listeners = {}
         logging.debug("_resources initialized and stored in request scope only " % _resources)
         
     elif not hasattr(application, '_resources'):
         setattr(application, '_resources', {})
+        setattr(application, '_resource_listeners', {})
         logging.debug("Created _resource attr")
+        _resources = application._resources
         _resources = application._resources
     else:
         logging.debug("application._resources (%s) already initialized" % application._resources)
+        _resource_listeners = application._resources
         _resources = application._resources
 
 def is_resource_registered(key):
     """ Check if a resource is registered.""" 
-    #logging.debug("Is %s resource registered?" % key)
-    if key in _resources:
-        #logging.debug("Yup")
+    if not _resources is None and key in _resources:
         return True
     else:
-        #logging.debug("Nope")
         return False
 
 def register_resource(resource, key=None):
@@ -52,42 +54,45 @@ def register_resource(resource, key=None):
     if key not in _resources:
         # add us to the list
         _resources[key] = resource
+        # call our hook
         if isinstance(resource, Resource):
             resource._on_register()
-        logging.debug("register_resource success key: %s" % key)
+        #logging.debug("register_resource success key: %s" % key)
+        return True
     else:
-        logging.debug("register_resource ignored: already registered key %s" % 
-            key)
-    return True
+        #logging.debug("register_resource ignored: already registered %s" % key)
+        return False
+        
 
-def unregister_resource(key):
+def unregister_resource(key, sender_id=None):
     """ Call our on_unregister hook and delete from list.
     """ 
     if key not in _resources:
-        logging.debug("unregister_resource ignored: %s not registered" % key)
+        #logging.debug("unregister_resource ignored: %s not registered" % key)
         return False
     else:
         resource = _resources[key]
-        logging.debug("unregister_resource success key: %s" % key)                    
+        #remove us from the list
         del _resources[key]
+        # call our hook
         if isinstance(resource, Resource):
-            resource._on_unregistered()
-
+            resource._on_unregister()
+        #logging.debug("unregister_resource instance success: %s" % key)   
         return True
 
 def get_resource(key):
     """ Check if key is a resource that is registered
     and return resource if found, None if not found.
     """ 
-    if key in _resources:
+    if not _resources is None and key in _resources:
         #logging.debug("get_resource found resource %s" % key)
         return _resources[key]
     else:
-        logging.debug("get_resource didn't find resource %s" % key)
+        # logging.debug("get_resource didn't find resource %s" % key)
         return None
 
 def get_resource_keys():
-    """ get our list of resources.
+    """ get our list of resource keys.
     """ 
     if _resources is None:
         return []
@@ -95,7 +100,7 @@ def get_resource_keys():
                     
 def create_resource_key(name, resource_type=None):
     """used as the key when a resource is stored"""
-    return "%s %s" % ((resource_type if resource_type is not None else ''),
+    return "%s:%s" % ((resource_type if resource_type is not None else ''),
             (name if name is not None else ''))
 
 
@@ -122,6 +127,8 @@ class Resource(Document):
     name = StringField(required=True)
     # a resource_type such as data_connection, queryset, service, anything really
     resource_type = StringField(required=True)
+
+    sender_id = StringField(required=True)
     
     def __init__(self, *args, **kwargs):
         self.resource = None # this is where we store the user defined resource

@@ -7,16 +7,20 @@ from brubeck.request_handling import (
     WebMessageHandler, 
     Brubeck,
     render,
-    coro_spawn,
+)
+from brubeckservice.connections import (
+    coro_sleep,
 )
 from brubeckservice.base import (
     ServiceClientMixin,
-    ServiceMessageHandler,
-    coro_sleep,
     service_client_init,
     HANDLE_RESPONSE,
     DO_NOT_HANDLE_RESPONSE,
 )
+from brubeckservice.handlers import (
+    ServiceMessageHandler,
+)
+
 from brubeck.templating import (
     Jinja2Rendering,
     load_jinja2_env,
@@ -146,8 +150,12 @@ config = {
 app = Brubeck(**config)
 
 # Start our registration listener
-service_client_init(app, service_registration_addr, service_registration_passphrase, 
-    service_client_heartbeat_addr)
+service_client_init(app, 
+    service_registration_passphrase,
+    service_id, 
+    service_registration_addr, 
+    service_client_heartbeat_addr
+)
     
 ## start our server to handle requests
 if __name__ == "__main__":

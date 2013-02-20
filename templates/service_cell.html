@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{title}}{% endblock %}
+{% block head %}
+base.html{% endblock %}
+{% block body %}
+<div id="outer" >
+    <div id="content" class="container-fluid fill">
+        <div id="service_header" class="span4">
+        <div class="service_header_inner">
+        <h2>{{service['name']}}</h2>
+        <div>{{service['service_in_count']}</div>        
+        <div>{{service['service_out_count']}</div>        
+        <div>{{service['heartbeat_count']}</div>        
+        <div>{{service['heartbeat_listener_count']}</div>        
+        <div>{{service['registration_count']}</div>        
+        <div>{{service['registraton_listener_count']}</div>        
+    </div>
+    </div>
+</div>
+{% endblock %}

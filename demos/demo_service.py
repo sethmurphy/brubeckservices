@@ -2,11 +2,15 @@
 import logging
 import time
 from brubeck.request_handling import Brubeck
-from brubeckservice.base import (
-    ServiceConnection,
-    ServiceMessageHandler,
+from brubeckservice.connections import (
     coro_sleep,
-    service_registration,
+)
+from brubeckservice.handlers import (
+    ServiceMessageHandler,
+)
+from brubeckservice.connections import (
+    ServiceConnection,
+    _service_registration,
 )
 from brubeck.templating import (
     Jinja2Rendering,
@@ -20,7 +24,7 @@ class SlowEchoServiceHandler(ServiceMessageHandler):
     def request(self):
         """do something and take too long"""
         logging.debug("Starting request %s:%s" % (self.message.conn_id, int(time.time())))
-        coro_sleep(5)
+        coro_sleep(3)
         self.set_status(200, "Took a while, but I am back.")
         self.add_to_payload("RETURN_DATA", self.message.get_argument("RETURN_DATA", "NO DATA"))
         self.headers = {"METHOD": "response"}
@@ -41,7 +45,8 @@ service_id = 'run_slow' # the id to call service by in client
 service_addr = 'ipc://run/slow'
 service_response_addr = 'ipc://run/slow_response'
 service_passphrase = 'my_shared_secret'
-heartbeat_addr = 'ipc://run/heartbeat'
+service_heartbeat_addr = 'ipc://run/service_heartbeat'
+service_client_heartbeat_addr = 'ipc://run/service_client_heartbeat'
 
 config = {
     'msg_conn': ServiceConnection(service_addr, service_response_addr, service_passphrase),
@@ -59,9 +64,18 @@ config = {
 ## get us started!
 ##
 app = Brubeck(**config)
-
-service_registration(app, service_registration_addr, service_registration_passphrase, 
-    service_id, service_addr, service_response_addr, service_passphrase, heartbeat_addr)
+    
+_service_registration(app, 
+    service_registration_passphrase, 
+    service_id, 
+    service_registration_addr, 
+    service_passphrase, 
+    service_addr, 
+    service_response_addr, 
+    service_heartbeat_addr, 
+    service_client_heartbeat_addr, 
+    5,app.msg_conn.sender_id)
+    
 ## start our server to handle requests
 if __name__ == "__main__":
     app.run()

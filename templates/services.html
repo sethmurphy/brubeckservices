@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{title}}{% endblock %}
+{% block head %}
+{% include 'header.html'%}
+{% endblock %}
+{% block body %}
+<div id="outer" >
+    <div id="content" class="container-fluid fill">
+        <div id="services">
+            {%- for service in services-%}
+                {% include 'service_cell.html' %}
+            {%- endfor -%}
+        </div>
+    </div>
+</div>
+{% endblock %}
