@@ -1,4 +1,4 @@
-# functions for creating/parsing tnetstrings fields
+# helper functions for creating/parsing tnetstrings fields
 def t(text):
     """create a tnetstring field given the text"""
     return "%d:%s" % (len(str(text)), str(text))

@@ -63,7 +63,7 @@ class ServiceResponse(ServiceRequest):
         super(ServiceResponse, self).__init__(*args, **kwargs)
 
 class ServiceConnectionInfo(Document):
-    """Contains all the information needed to set up a service
+    """Contains all the infor mation needed to set up a service
     heartbeats and all (Not the request itself)"""
     # passphrase needed for service registration
     service_registration_passphrase = StringField(required=True)   

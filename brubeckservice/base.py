@@ -188,16 +188,3 @@ def service_client_init(application,
         service_registration_passphrase, service_id, service_registration_addr, 
         service_client_heartbeat_addr, service_client_heartbeat_interval)
 
-
-    #application.msg_conn.start_service_client_registration_listener(
-    #   service_registration_passphrase, 
-    #   service_id, service_registration_addr, 
-    #   service_client_heartbeat_addr, service_client_heartbeat_interval, 
-    #   sender_id)
-    
-    #coro_spawn(_service_client_registration_listener, application, 'registration',
-    #    service_registration_passphrase, service_id, service_registration_addr, 
-    #    service_client_heartbeat_addr, service_client_heartbeat_interval, 
-    #    sender_id)
-
-
