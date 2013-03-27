@@ -377,6 +377,26 @@ def _service_registration(application,
     service_heartbeat_timeout=_DEFAULT_SERVICE_CLIENT_TIMEOUT, sender_id = None, 
     is_reregistration = 0,
     service_heartbeat_interval = DEFAULT_HEARTBEAT_INTERVAL):
+
+
+    logging.debug('******** START _service_registration *********')
+
+    logging.debug('service_registration_passphrase: %s' % service_registration_passphrase)
+    logging.debug('service_id: %s' % service_id)
+    logging.debug('service_registration_addr: %s' % service_registration_addr)
+    logging.debug('service_passphrase: %s' % service_passphrase)
+    logging.debug('service_addr: %s' % service_addr)
+    logging.debug('service_response_addr: %s' % service_response_addr)
+    logging.debug('service_heartbeat_addr: %s' % service_heartbeat_addr)
+    logging.debug('service_client_heartbeat_addr: %s' % service_client_heartbeat_addr)
+    logging.debug('service_heartbeat_timeout: %s' % service_heartbeat_timeout)
+    logging.debug('sender_id: %s' % sender_id)
+    logging.debug('is_reregistration: %s' % is_reregistration)
+    logging.debug('service_heartbeat_interval: %s' % service_heartbeat_interval)
+
+    logging.debug('******** END _service_registration *********')
+
+
     
     service_connection_info = {
             'service_registration_passphrase': service_registration_passphrase,
@@ -480,8 +500,9 @@ def _service_reg(application, *args, **kwargs):
             else:
                 service_connection_info['is_reregistration'] = 0
         else:
-            service_heartbeat_connection = ServiceHeartbeatConnection(application, **service_connection_info)
-            application.msg_conn.set_service_heartbeat_connection(application, service_heartbeat_connection)
+            if False:
+                service_heartbeat_connection = ServiceHeartbeatConnection(application, **service_connection_info)
+                application.msg_conn.set_service_heartbeat_connection(application, service_heartbeat_connection)
         
 
     return True
@@ -558,9 +579,10 @@ def _service_client_registration_listener(application,
                     'sender_id': sender_id,
                     'is_reregistration': 0,
             }
-            client_heartbeat_connection = ClientHeartbeatConnection(application, 
-                **service_connection_info)
-            service_conn.set_client_heartbeat_connection(application, client_heartbeat_connection)
+            if False:
+                client_heartbeat_connection = ClientHeartbeatConnection(application, 
+                    **service_connection_info)
+                service_conn.set_client_heartbeat_connection(application, client_heartbeat_connection)
             msg = "%s %s %s" % (sender_id, t(fields[1]), t(service_client_heartbeat_addr))
         service_registration_sock.send(to_bytes(msg))
 

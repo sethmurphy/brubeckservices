@@ -184,6 +184,16 @@ def service_client_init(application,
     service_registration_passphrase, service_id, service_registration_addr,
     service_client_heartbeat_addr, service_client_heartbeat_interval = DEFAULT_HEARTBEAT_INTERVAL):
     """Starts everything needed for a brubeck app to be a service_client"""
+    logging.debug('******** START service_client_init *********')
+
+    logging.debug('service_registration_passphrase: %s' % service_registration_passphrase)
+    logging.debug('service_id: %s' % service_id)
+    logging.debug('service_registration_addr: %s' % service_registration_addr)
+    logging.debug('service_client_heartbeat_addr: %s' % service_client_heartbeat_addr)
+    logging.debug('service_client_heartbeat_interval: %s' % service_client_heartbeat_interval)
+
+    logging.debug('******** END service_client_init *********')
+    
     assure_resource(application)
     start_service_client_registration_listener(application,
         service_registration_passphrase, service_id, service_registration_addr, 
