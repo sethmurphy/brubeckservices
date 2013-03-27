@@ -786,16 +786,19 @@ class ServiceHeartbeatConnection(HeartbeatConnection):
     def beat_forever(self, application):
         """our heartbeat"""
         def the_beat_is_on(application):
+            logging.debug("SERVICE beat is on")
             while self.alive:
-                coro_sleep(self.service_heartbeat_interval)
                 msg = "%s %s %s %s" % (self.sender_id, t(self.service_passphrase), t(self.service_id), t(self.service_heartbeat_addr))
                 self.send(self.sender_id, msg)
                 logging.debug("service PING (%s:%s)" % (self.out_addr, self.sender_id))
+                coro_sleep(self.service_heartbeat_interval)
+
             if not self.alive:
                 logging.debug("service PING DOWN self.alive check failed(%s:%s)" % (self.out_addr, self.sender_id))
             self.out_sock.close()
-
-        coro_spawn(the_beat_is_on, application, 'heartbeat')
+            
+        logging.debug("SERVICE beat_forever spawning the_beat_is_on")
+        coro_spawn(the_beat_is_on, application, 'service_heartbeat')
 
 
 class ClientHeartbeatConnection(HeartbeatConnection):
@@ -860,17 +863,19 @@ class ClientHeartbeatConnection(HeartbeatConnection):
                     #    self.service_heartbeat_timeout, self.sender_id,
                     #    1)
                              
-        coro_spawn(listen_forever, application, 'client_heartbeat_listener')
+        coro_spawn(listen_forever, application, 'service_heartbeat_listener')
 
     def beat_forever(self, application):
         """our heartbeat"""
         def the_beat_is_on(application):
+            logging.debug("CLIENT beat is on")
             while self.alive:
-                coro_sleep(self.service_heartbeat_interval)
                 msg = "%s %s %s %s" % (self.sender_id, t(self.service_passphrase), t(self.service_id), t(self.service_heartbeat_addr))
                 self.send(self.sender_id, msg)
                 logging.debug("client PING (%s:%s)" % (self.out_addr, self.sender_id))
+                coro_sleep(self.service_heartbeat_interval)
             if not self.alive:
                 logging.debug("client PING DOWN self.alive check failed(%s:%s)" % (self.out_addr, self.sender_id))
-        
+
+        logging.debug("CLIENT beat_forever spawning the_beat_is_on")
         coro_spawn(the_beat_is_on, application, 'client_heartbeat')

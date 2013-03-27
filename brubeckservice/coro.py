@@ -1,6 +1,8 @@
+import logging
 from brubeck.request_handling import (
     CORO_LIBRARY,
 )
+
 ################################################################
 ### Attempt to setup gevent wrappers for sleep, events and more
 ### Always prefere gevent if installed, then try eventlet
@@ -65,14 +67,19 @@ def coro_conn(app, tag = None):
     if tag is None or tag == 'coro_pool':
         return app.pool
     elif tag in coro_pool:
+        logging.debug("coro_conn returning existing pool for %s" % tag)
         return coro_pool[tag]
     else:
         coro_pool[tag] = coro_create_pool()
+        logging.debug("coro_conn returning new pool for %s" % tag)
         return coro_pool[tag]
 
 def coro_spawn(function, app, tag, *a, **kw):
     """spawn a coro"""
-    return _coro_spawn(coro_conn(app, tag), function, app, *a, **kw)
+    logging.debug("getting pool for %s" % tag)
+    pool = coro_conn(app, tag)
+    logging.debug("pool for %s: %s" % (tag, pool))
+    return _coro_spawn(pool, function, app, *a, **kw)
 
 def coro_count(app, tag):
     """get the count of a coro pool"""

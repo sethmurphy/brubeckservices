@@ -118,6 +118,7 @@ class ServiceClientMixin(object):
         """do some work and wait for the results of the response to handler_response the response from the service
         blocking, waits for handled result.
         """
+        logging.debug("send_service_request(service_id=%s, service_req=%s)" % (self, service_id, service_req))
         #sender_id = self.application.msg_conn.sender_id
         (sender_id, service_req) = _send_service_request(self.application, service_id, service_req)
         conn_id = service_req.conn_id
