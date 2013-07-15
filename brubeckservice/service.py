@@ -259,7 +259,7 @@ def parse_service_request(msg, passphrase):
     # last is group of tnetstrings, will handle after
     i=1
     for field in fields[1:-1]:
-        fields[i] = t_parse(field)[0]),
+        fields[i] = t_parse(field)[0]
         i+=1
     # our minimal "security" 
     if fields[3] != passphrase:
