@@ -41,6 +41,13 @@ _SERVICE_RESOURCE_TYPE = 'SERVICE'
 _DEFAULT_SERVICE_REQUEST_METHOD = 'request'
 _DEFAULT_SERVICE_RESPONSE_METHOD = 'response'
 
+REQUEST_TYPE_SYNC = 0 # Request is sent and sender waits for response
+REQUEST_TYPE_ASYNC = 1 # Request is sent and sender continues on
+REQUEST_TYPE_FORWARD = 2 # Request is sent and sender cedes any responsabilities
+
+HANDLE_RESPONSE = 1
+DO_NOT_HANDLE_RESPONSE = 0
+
 def _service_is_registered(application, service_id):
     """ Check if a service is registered"""
     key = create_resource_key(service_id, _SERVICE_RESOURCE_TYPE)

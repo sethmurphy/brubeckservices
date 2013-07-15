@@ -764,14 +764,13 @@ class ServiceHeartbeatConnection(HeartbeatConnection):
                         kwargs['service_response_addr'], 
                         kwargs['service_passphrase'])
 
-                    if _service_reg(application, *[], **kwargs):
-                        logging.debug("ServiceHeartbeatConnection listen_forever self.sender_id: %s" % self.sender_id)
-                        _register_service(application, 
-                           kwargs['service_passphrase'], #serv_passphrase
-                           kwargs['service_id'], #service_id 
-                           kwargs['service_addr'], # service_addr
-                           kwargs['service_response_addr'], # service_resp_addr
-                           service_conn)
+                    logging.debug("ServiceHeartbeatConnection listen_forever self.sender_id: %s" % self.sender_id)
+                    _register_service(application, 
+                       kwargs['service_passphrase'], #serv_passphrase
+                       kwargs['service_id'], #service_id 
+                       kwargs['service_addr'], # service_addr
+                       kwargs['service_response_addr'], # service_resp_addr
+                       service_conn)
 
                     service_heartbeat_connection = ServiceHeartbeatConnection(application, 
                         **kwargs)
