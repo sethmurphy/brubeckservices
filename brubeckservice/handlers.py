@@ -3,7 +3,7 @@
 ##
 import logging
 from brubeck.request_handling import MessageHandler
-from coro import (
+from brubeckservice.coro import (
     coro_conn,
     coro_count,
     coro_spawn,

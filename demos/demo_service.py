@@ -2,15 +2,13 @@
 import logging
 import time
 from brubeck.request_handling import Brubeck
-from brubeckservice.connections import (
-    coro_sleep,
-)
 from brubeckservice.handlers import (
     ServiceMessageHandler,
 )
 from brubeckservice.connections import (
+    coro_sleep,
     ServiceConnection,
-    _service_registration,
+    register_service,
 )
 from brubeck.templating import (
     Jinja2Rendering,
@@ -65,7 +63,7 @@ config = {
 ##
 app = Brubeck(**config)
     
-_service_registration(app, 
+register_service(app, 
     service_registration_passphrase, 
     service_id, 
     service_registration_addr, 
@@ -73,8 +71,8 @@ _service_registration(app,
     service_addr, 
     service_response_addr, 
     service_heartbeat_addr, 
-    service_client_heartbeat_addr, 
-    5,app.msg_conn.sender_id)
+    5,
+    app.msg_conn.sender_id)
     
 ## start our server to handle requests
 if __name__ == "__main__":

@@ -65,6 +65,7 @@ elif CORO_LIBRARY == 'eventlet':
 def coro_conn(app, tag = None):
     """get a coro pool"""
     if tag is None or tag == 'coro_pool':
+        logging.debug("coro_conn returning app pool.")
         return app.pool
     elif tag in coro_pool:
         logging.debug("coro_conn returning existing pool for %s" % tag)
@@ -74,7 +75,7 @@ def coro_conn(app, tag = None):
         logging.debug("coro_conn returning new pool for %s" % tag)
         return coro_pool[tag]
 
-def coro_spawn(function, app, tag, *a, **kw):
+def coro_spawn(function, app, tag = None, *a, **kw):
     """spawn a coro"""
     logging.debug("getting pool for %s" % tag)
     pool = coro_conn(app, tag)

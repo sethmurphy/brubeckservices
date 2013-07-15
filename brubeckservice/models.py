@@ -28,6 +28,9 @@ class ServiceRequest(Document):
     origin_conn_id  = StringField(required=True)
     # This is the socket address for the reply to the client
     origin_out_addr  = StringField(required=True)
+    # What type of request are we? (sync=1, async=2, forward=3)
+    # This is set by the call to send the request
+    request_type = None
     # flag to see if response tries to call handler (1=yes)
     handle_response = StringField(required=True)
     # used to route the request
@@ -41,6 +44,8 @@ class ServiceRequest(Document):
     # a dict, this can be whatever you need it to be to get the job done.
     body = DictField(required=True)
 
+    #_service_request_type = None
+    
     def __init__(self, *args, **kwargs):
         self.request_timestamp = int(time.time() * 1000)
         super(ServiceRequest, self).__init__(*args, **kwargs)
@@ -71,7 +76,6 @@ class ServiceConnectionInfo(Document):
     service_id = StringField(required=True)
     # the address to register the service for
     service_registration_addr = StringField(required=True)
-
 
     # passphrase needed for service call
     service_passphrase = StringField(required=True)    

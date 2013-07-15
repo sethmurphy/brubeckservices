@@ -21,11 +21,11 @@ from brubeck.request_handling import (
     Brubeck,
     render,
 )
-from tnetstrings import (
+from brubeckservice.tnetstrings import (
     t,
     t_parse,
 )
-from service import (
+from brubeckservice.service import (
     _register_service,
     _unregister_service,
     parse_service_request,
@@ -35,12 +35,12 @@ from service import (
     close_out,
     close_in,
 )
-from models import (
+from brubeckservice.models import (
     ServiceResponse, 
     ServiceConnectionInfo
 )
     
-from coro import (
+from brubeckservice.coro import (
     coro_get_event,
     coro_send_event,
     coro_sleep,
@@ -79,7 +79,7 @@ class ServiceConnection(Mongrel2Connection):
         self.in_sock.connect(self.in_addr)
         print("CONNECT service requested PULL socket %s:%s" % (self.in_addr, self.sender_id))
 
-        # the response is sent to original clients incoming DEALER socket
+        # the response is sent to original clients incoming ROUTER socket
         self.out_sock = ctx.socket(zmq.ROUTER)
         self.out_sock.connect(self.out_addr)
         print("CONNECT service response ROUTER socket %s:%s" % (self.out_addr, self.sender_id))
@@ -126,6 +126,7 @@ class ServiceConnection(Mongrel2Connection):
            origin_conn_id = the connection id from the original request
            origin_out_addr = the socket address that expects the final result
            msg = the payload (a JSON object)
+           request_type = what behavior am I expecting from the request (async, sync, forward)
            handle_response = call a handler on response processing
            path = the path used to route to the proper response handler
         """
@@ -150,6 +151,7 @@ class ServiceConnection(Mongrel2Connection):
             t(service_response.origin_sender_id),
             t(service_response.origin_conn_id),
             t(service_response.origin_out_addr),
+            #t(service_response._service_request_type),
             t(service_response.handle_response),
             t(service_response.path),
             t(service_response.method),
@@ -188,7 +190,7 @@ class ServiceConnection(Mongrel2Connection):
                 logging.debug("...recv getting more")
                 zmq_msg += self.in_sock.recv()
             logging.debug("...recv got all")
-        
+
             return zmq_msg
         except Exception, e:
             logging.debug("ServiceConnection recv() going down.")
@@ -196,12 +198,12 @@ class ServiceConnection(Mongrel2Connection):
     def register_service(self, application, 
             service_registration_passphrase, service_id, service_registration_addr,  
             service_passphrase, service_addr, service_response_addr,  
-            service_heartbeat_addr, service_client_heartbeat_addr, 
-            service_heartbeat_timeout=_DEFAULT_SERVICE_CLIENT_TIMEOUT, sender_id = None, 
+            service_heartbeat_addr, service_heartbeat_timeout=_DEFAULT_SERVICE_CLIENT_TIMEOUT, 
+            sender_id = None, 
             is_reregistration = 0):
-        # spin upour corresponding service listener
+        """just a wrapper around the function of the same name"""
 
-        return _service_registration(application, 
+        return register_service(application, 
             service_registration_passphrase, service_id, service_registration_addr, 
             service_passphrase, service_addr, service_response_addr, 
             service_heartbeat_addr, service_client_heartbeat_addr, 
@@ -370,17 +372,18 @@ class ServiceClientConnection(ServiceConnection):
 
 
 ## message listeners
-def _service_registration(application, 
+def register_service(application, 
     service_registration_passphrase, service_id, service_registration_addr,
     service_passphrase, service_addr, service_response_addr,  
-    service_heartbeat_addr, service_client_heartbeat_addr, 
-    service_heartbeat_timeout=_DEFAULT_SERVICE_CLIENT_TIMEOUT, sender_id = None, 
-    is_reregistration = 0,
-    service_heartbeat_interval = DEFAULT_HEARTBEAT_INTERVAL):
-
+    service_heartbeat_addr = None, service_heartbeat_timeout=_DEFAULT_SERVICE_CLIENT_TIMEOUT, 
+    sender_id = None, is_reregistration = 0,
+    service_heartbeat_interval = DEFAULT_HEARTBEAT_INTERVAL,
+    ):
+    """Register a service with a client. Called once on service startup to 
+    register service with the remote Brubeck service client.
+    """
 
     logging.debug('******** START _service_registration *********')
-
     logging.debug('service_registration_passphrase: %s' % service_registration_passphrase)
     logging.debug('service_id: %s' % service_id)
     logging.debug('service_registration_addr: %s' % service_registration_addr)
@@ -388,15 +391,11 @@ def _service_registration(application,
     logging.debug('service_addr: %s' % service_addr)
     logging.debug('service_response_addr: %s' % service_response_addr)
     logging.debug('service_heartbeat_addr: %s' % service_heartbeat_addr)
-    logging.debug('service_client_heartbeat_addr: %s' % service_client_heartbeat_addr)
     logging.debug('service_heartbeat_timeout: %s' % service_heartbeat_timeout)
     logging.debug('sender_id: %s' % sender_id)
     logging.debug('is_reregistration: %s' % is_reregistration)
     logging.debug('service_heartbeat_interval: %s' % service_heartbeat_interval)
-
     logging.debug('******** END _service_registration *********')
-
-
     
     service_connection_info = {
             'service_registration_passphrase': service_registration_passphrase,
@@ -406,38 +405,13 @@ def _service_registration(application,
             'service_addr': service_addr,
             'service_response_addr': service_response_addr,
             'service_heartbeat_addr': service_heartbeat_addr,
-            'service_client_heartbeat_addr': service_client_heartbeat_addr,
             'service_heartbeat_timeout': service_heartbeat_timeout,
             'service_heartbeat_interval': service_heartbeat_interval,
             'sender_id': sender_id,
             'is_reregistration': 1 if is_reregistration==1 else 0,
     }
-    args = []
-    return _service_reg(application, *args, **service_connection_info)
 
-def _service_reg(application, *args, **kwargs):
-    
-    service_connection_info = kwargs
-    
-    #logging.debug("kwargs: %s" % kwargs)
-    
-    service_registration_passphrase = kwargs['service_registration_passphrase']
-    service_id = kwargs['service_id']
-    service_registration_addr = kwargs['service_registration_addr']
-    service_passphrase=kwargs['service_passphrase']
-    service_addr=kwargs['service_addr']
-    service_response_addr=kwargs['service_response_addr']
-    service_heartbeat_addr=kwargs['service_heartbeat_addr']
-    service_client_heartbeat_addr=kwargs['service_client_heartbeat_addr']
-    service_heartbeat_timeout = kwargs['service_heartbeat_timeout']
-    service_heartbeat_interval = kwargs['service_heartbeat_interval']
-    sender_id = kwargs['sender_id']
-    is_reregistration = kwargs['is_reregistration']
-
-    """Function is called once on service startup to 
-    register service with the remote Brubeck service client.
-    """
-    logging.debug("_service_registration: (service_registration_addr, service_registration_passphrase,service_heartbeat_timeout,sender_id): (%s,%s, %s, %s)" % 
+    logging.debug("register_service: (service_registration_addr, service_registration_passphrase,service_heartbeat_timeout,sender_id): (%s,%s, %s, %s)" % 
         (service_registration_addr, service_registration_passphrase,service_heartbeat_timeout,sender_id))
     # Just start our zmq socket here, no reason for abstraction
     zmq = load_zmq()
@@ -458,7 +432,6 @@ def _service_reg(application, *args, **kwargs):
     logging.debug("service_registration waiting for response");
     raw_registration_response = service_registration_sock.recv()    
     service_registration_sock.close()
-    coro_sleep(0)
     logging.debug("_service_registration recv(): %s" % raw_registration_response)
 
     fields = (sndr_id, svc_registration_passphrase, svc_client_heartbeat_addr) = (
@@ -500,34 +473,33 @@ def _service_reg(application, *args, **kwargs):
             else:
                 service_connection_info['is_reregistration'] = 0
         else:
-            if False:
+            if not service_heartbeat_addr is None:
                 service_heartbeat_connection = ServiceHeartbeatConnection(application, **service_connection_info)
                 application.msg_conn.set_service_heartbeat_connection(application, service_heartbeat_connection)
-        
 
     return True
 
 def start_service_client_registration_listener(application, 
     service_registration_passphrase, service_id, service_registration_addr, 
-    service_client_heartbeat_addr, service_client_heartbeat_interval = DEFAULT_HEARTBEAT_INTERVAL, sender_id=None):
-        coro_spawn(_service_client_registration_listener, application, 'registration_listener',
-            service_registration_passphrase, service_id, service_registration_addr, 
-            service_client_heartbeat_addr, service_client_heartbeat_interval)
+    service_client_heartbeat_addr = None, service_client_heartbeat_interval = DEFAULT_HEARTBEAT_INTERVAL):
+    """public function to start our registration listeners for services to register with."""
+    coro_spawn(_service_client_registration_listener, application, 'registration_listener',
+        service_registration_passphrase, service_id, service_registration_addr, 
+        service_client_heartbeat_addr, service_client_heartbeat_interval)
+    # allow other events to process to make sure the listener is started
+    coro_sleep(0)
 
 def _service_client_registration_listener(application, 
     service_registration_passphrase, service_id, service_registration_addr, 
-    service_client_heartbeat_addr, service_client_heartbeat_interval = DEFAULT_HEARTBEAT_INTERVAL):
+    service_client_heartbeat_addr = None, service_client_heartbeat_interval = DEFAULT_HEARTBEAT_INTERVAL):
     """Function runs in a coroutine, one registration listener for each brubeck instance
-    When a message is received the service is registered and a listener is started.
+    When a registration message is received the service is registered and a listener is started.
     """
     logging.debug("_service_client_registration_listener: (service_registration_addr, service_registration_passphrase,service_client_heartbeat_interval): (%s, %s, %s)" % 
         (service_registration_addr, service_registration_passphrase,service_client_heartbeat_interval))
     # Just start our zmq socket here, no reason for abstraction
     zmq = load_zmq()
     ctx = load_zmq_ctx()
-
-
-    # the request (in_sock) is received from a DEALER socket (round robin)
     service_registration_sock = ctx.socket(zmq.REP)
     print("Binding service registration listener REP socket %s" % (service_registration_addr))
     service_registration_sock.bind(service_registration_addr)
@@ -536,7 +508,6 @@ def _service_client_registration_listener(application,
     while True:
         logging.debug("_service_client_registration_listener waiting");
         raw_registration_request = service_registration_sock.recv()
-        coro_sleep(0)
         logging.debug("_service_client_registration_listener recv(): %s" % raw_registration_request)
         # 21a6d348083f4b7d8d9680be387e01da 29:my_shared_registration_secret 8:run_slow 14:ipc://run/slow 23:ipc://run/slow_response 16:my_shared_secret 27:ipc://run/service_heartbeat
         # just send raw message to connection client
@@ -562,8 +533,6 @@ def _service_client_registration_listener(application,
                 fields[3], # service_addr
                 fields[4], # service_resp_addr
                 service_conn)
-
-            logging.debug("Using new ServiceHeartbeatConnection")
             
             service_connection_info = {
                     'service_registration_passphrase': fields[5],
@@ -579,11 +548,12 @@ def _service_client_registration_listener(application,
                     'sender_id': sender_id,
                     'is_reregistration': 0,
             }
-            if False:
+            if not service_client_heartbeat_addr is None:
                 client_heartbeat_connection = ClientHeartbeatConnection(application, 
                     **service_connection_info)
                 service_conn.set_client_heartbeat_connection(application, client_heartbeat_connection)
             msg = "%s %s %s" % (sender_id, t(fields[1]), t(service_client_heartbeat_addr))
+        coro_sleep(0)
         service_registration_sock.send(to_bytes(msg))
 
 def parse_service_response(msg, passphrase):
@@ -621,7 +591,6 @@ def parse_service_response(msg, passphrase):
         body = {
             "RETURN_DATA": body,
         }
-    # create our service response
     service_response = ServiceResponse(**{
         "sender": fields[0], 
         "conn_id": fields[1], 
@@ -673,7 +642,8 @@ class HeartbeatConnection(Connection):
         self.service_heartbeat_timeout = kwargs['service_heartbeat_timeout']
         self.service_heartbeat_interval = kwargs['service_heartbeat_interval']
         self.sender_id = kwargs['sender_id']
-        self.is_reregistration= kwargs['is_reregistration']
+        self.is_reregistration= kwargs.get('is_reregistration', 0)
+        self.heartbeat= kwargs.get('heartbeat', False)
         #self.sender_id = uuid4().hex
                     
         self.in_sock = ctx.socket(zmq.SUB) # our listener
@@ -695,12 +665,15 @@ class HeartbeatConnection(Connection):
             'service_heartbeat_interval': self.service_heartbeat_interval,
             'sender_id': self.sender_id,
             'is_reregistration': (1 if self.is_reregistration == 1 else 0),
+            'heartbeat': self.heartbeat,
         }
-        
+
     def start(self, application):
-        self.listen_forever(application);
-        self.beat_forever(application)
-        
+        def start_me_up(application):
+            self.beat_forever(application)
+            self.listen_forever(application)
+
+        coro_spawn(start_me_up, application)
 
     def recv(self):
         """Receives a raw mongrel2.handler.Request object that you from the
@@ -766,20 +739,23 @@ class ServiceHeartbeatConnection(HeartbeatConnection):
 
             poller = zmq.Poller()
             poller.register(self.in_sock, zmq.POLLIN)
-        
+
             logging.debug("ServiceHeartbeatConnection listen_forever (%s, %s)." % (self.in_addr, self.sender_id))
             while self.alive:
+                logging.debug("ServiceHeartbeatConnection listen_forever ... %s" % self.service_heartbeat_timeout)
                 socks = dict(poller.poll(self.service_heartbeat_timeout * 1000))
                 raw_heartbeat_response = None
                 if socks and socks.get(self.in_sock) == zmq.POLLIN:
                     raw_heartbeat_response = self.in_sock.recv()
-                    coro_sleep(0)
                     logging.debug("service PONG (%s,%s)" % (self.in_addr, self.sender_id))
+                    coro_sleep(0)
+
                 if raw_heartbeat_response is None:
                     logging.debug("service PONG TIMEOUT in service client heartbeat listener (%s,%s)" % (self.in_addr, self.sender_id))
                     # let us all die
                     self.alive=False
                     kwargs = self.get_service_connection_info()
+
                     # Just reregister all over again
                     kwargs['is_reregistration'] = 1
 
@@ -801,7 +777,6 @@ class ServiceHeartbeatConnection(HeartbeatConnection):
                         **kwargs)
                     application.msg_conn.set_service_heartbeat_connection(application, service_heartbeat_connection)
 
-                               
             self.in_sock.close()
         coro_spawn(fun_listen_forever, application, 'client_heartbeat_listener')
 
@@ -864,12 +839,13 @@ class ClientHeartbeatConnection(HeartbeatConnection):
         
             logging.debug("ClientHeartbeatConnection listen_forever (%s, %s)." % (self.in_addr, self.sender_id))
             while self.alive:
+                logging.debug("ClientHeartbeatConnection listen_forever ... %s" % self.service_heartbeat_timeout)
                 socks = dict(poller.poll(self.service_heartbeat_timeout * 1000))
                 raw_heartbeat_response = None
                 if socks and socks.get(self.in_sock) == zmq.POLLIN:
                     raw_heartbeat_response = self.in_sock.recv()
-                    coro_sleep(0)
                     logging.debug("client PONG (%s, %s)" % (self.in_addr, self.sender_id))
+                    coro_sleep(0)
                 if raw_heartbeat_response is None:
                     logging.debug("client PONG TIMEOUT in service heartbeat listener (%s,%s)" % (self.in_addr, self.sender_id))
                     self.alive=False

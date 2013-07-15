@@ -3,54 +3,59 @@ import os
 import sys
 import time
 import ujson as json
+import imp
 import string
 from uuid import uuid4
-
 from brubeck.request import Request
 from brubeck.request_handling import (
     CORO_LIBRARY,
+    Brubeck,
 )
-from connections import (
+from brubeckservice.connections import (
     ServiceConnection,
     _service_client_registration_listener,
     DEFAULT_HEARTBEAT_INTERVAL,
     start_service_client_registration_listener,
 )
-from models import (
+from brubeckservice.models import (
     ServiceRequest,
     ServiceResponse,
 )
-from handlers import (
+from brubeckservice.handlers import (
     ServiceMessageHandler,
 )
-from tnetstrings import (
+from brubeckservice.tnetstrings import (
     t_parse,
 )
-from service import (
+from brubeckservice.service import (
     _register_service,
     _unregister_service,
     _DEFAULT_SERVICE_REQUEST_METHOD,
 )
-from resource import (
+from brubeckservice.resource import (
     assure_resource,
 )
-from service import (
+from brubeckservice.service import (
     _SERVICE_RESOURCE_TYPE,
     _send_service_request,
     _get_service_info,
     _get_service_conn,
     _get_waiting_service_clients,
+    REQUEST_TYPE_SYNC,
+    REQUEST_TYPE_ASYNC,
+    REQUEST_TYPE_FORWARD,
+    HANDLE_RESPONSE,
+    DO_NOT_HANDLE_RESPONSE,
 )
 
-from coro import (
+from brubeckservice.coro import (
     coro_get_event,
     coro_send_event,
     coro_sleep,
     CORO_LIBRARY,
     coro_spawn,
 )
-HANDLE_RESPONSE = 1
-DO_NOT_HANDLE_RESPONSE = 0
+
 #################################
 ## Request and Response stuff 
 #################################
@@ -118,8 +123,9 @@ class ServiceClientMixin(object):
         """do some work and wait for the results of the response to handler_response the response from the service
         blocking, waits for handled result.
         """
-        logging.debug("send_service_request(service_id=%s, service_req=%s)" % (self, service_id, service_req))
+        logging.debug("send_service_request(service_id=%s, service_req=%s)" % (service_id, service_req))
         #sender_id = self.application.msg_conn.sender_id
+        service_req._request_type = REQUEST_TYPE_SYNC
         (sender_id, service_req) = _send_service_request(self.application, service_id, service_req)
         conn_id = service_req.conn_id
         raw_response = _wait(self.application, service_id, conn_id, sender_id)
@@ -136,6 +142,7 @@ class ServiceClientMixin(object):
         """defer some work, but still handle the response yourself
         non-blocking, returns immediately.
         """
+        service_req._request_type = REQUEST_TYPE_ASYNC
         _send_service_request(self.application, service_id, service_req)
         return
 
@@ -143,7 +150,8 @@ class ServiceClientMixin(object):
         """give up any responsability for the request, someone else will respond to the client
         non-blocking, returns immediately.
         """
-        raise NotImplemented("forward_to_service is not yet implemented, use send_service_request_nowait instead")    
+        service_req._request_type = REQUEST_TYPE_FORWARD
+        _send_service_request(self.application, service_id, service_req)
 
 
 ###################################################
@@ -182,7 +190,7 @@ def _update_service_heartbeat(application, service_id, sender_id):
 ## init functions
 def service_client_init(application, 
     service_registration_passphrase, service_id, service_registration_addr,
-    service_client_heartbeat_addr, service_client_heartbeat_interval = DEFAULT_HEARTBEAT_INTERVAL):
+    service_client_heartbeat_addr = None, service_client_heartbeat_interval = DEFAULT_HEARTBEAT_INTERVAL):
     """Starts everything needed for a brubeck app to be a service_client"""
     logging.debug('******** START service_client_init *********')
 
@@ -199,3 +207,99 @@ def service_client_init(application,
         service_registration_passphrase, service_id, service_registration_addr, 
         service_client_heartbeat_addr, service_client_heartbeat_interval)
 
+def lazyprop(method):
+    """ A nifty wrapper to only load preoperties when accessed
+    uses the lazyProperty pattern from:
+    http://j2labs.tumblr.com/post/17669120847/lazy-properties-a-nifty-decorator
+    inspired by  a stack overflow question:
+    http://stackoverflow.com/questions/3012421/python-lazy-property-decorator
+    This is to replace initializing common variable from cookies, query string, etc ..
+    that would be in the prepare() method.
+    """
+    attr_name = '_' + method.__name__
+    @property
+    def _lazyprop(self):
+        if not hasattr(self, attr_name):
+            attr = method(self)
+            setattr(self, attr_name, method(self))
+            # filter out our javascript nulls
+            if getattr(self, attr_name) == 'undefined':
+                setattr(self, attr_name, None)
+        return getattr(self, attr_name)
+    return _lazyprop
+
+class BrooklynCodeBrubeck(Brubeck):
+    """our main application, extending Brubeck
+    This is not application specific,
+    but general stuff that maybe shoud be in Brubeck someday"""
+
+    def __init__(self, *args, **kwargs):
+        """ Most of the parameters are dealt with by Brubeck,
+            do a little before call to super
+        """
+        settings_file = kwargs['settings_file'] if 'settings_file' in kwargs else none
+        project_dir = kwargs['project_dir'] if 'project_dir' in kwargs  else none
+
+
+        if project_dir == None:
+            raise Exception('missing project_dir from config')
+        else:
+            self.project_dir = project_dir
+
+        """load our settings"""
+        if settings_file != None:
+            self.settings = self.get_settings_from_file(settings_file)
+        else:
+            self.settings = {}
+
+        # we may have overriden default mongrel2_pairs in settings
+        #if 'mongrel2_pair' in self.settings:
+        #    kwargs['mongrel2_pair'] = self.settings['mongrel2_pair']
+
+        Brubeck.__init__(self, **kwargs)
+
+
+    def get_settings(self, setting_name, file_name=None):
+        """ This is an attempt at providing a possible
+        external location for settings to overide any
+        settings in the settings file that was passed
+        to the application during initialization.
+        """
+
+        try:
+            if hasattr(self, 'settings'):
+                if hasattr(self.settings, setting_name):
+                    # we had our settings loaded already
+                    return getattr(self.settings, setting_name)
+
+            if file_name == None:
+                # create default file name
+                file_name = self.project_dir + '/conf/' + setting_name + '.py'
+
+            # try to load our file
+            settings = self.get_settings_from_file(file_name)
+
+            if hasattr(settings, setting_name):
+                # load us in self.settings
+                # so we don't need to read from file  next time
+                self.settings.append({setting_name:settings[settings_name]})
+                return settings[settings_name]
+
+            raise Exception("Unable to load settings from file %s: %s " % (file_name, setting_name))
+
+        except:
+            # raise our error
+            raise
+
+
+    def get_settings_from_file(self, file_name):
+
+        settings = None
+        logging.debug ('loading settings from %s' % file_name)
+
+        try:
+            settings = imp.load_source('settings', file_name)
+        except:
+            raise #Exception("unknown error getting file: " + file_name)
+
+        return settings
