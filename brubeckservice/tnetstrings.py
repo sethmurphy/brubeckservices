@@ -1,3 +1,4 @@
+import logging
 # helper functions for creating/parsing tnetstrings fields
 def t(text):
     """create a tnetstring field given the text"""
