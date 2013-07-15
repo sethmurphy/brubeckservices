@@ -82,7 +82,7 @@ class ServiceClientMixin(object):
         return _unregister_service(self.application, service_id, service_passphrase, sender_id)
         
     def create_service_request(self, path, handle_response=HANDLE_RESPONSE, 
-        method=_DEFAULT_SERVICE_REQUEST_METHOD, arguments={}, msg={}, headers={}):
+        method=_DEFAULT_SERVICE_REQUEST_METHOD, arguments=None, msg=None, headers=None):
         """ path - string, used to route to proper handler
             method - used to map to the proper method of the handler
             arguments - dict, used within the method call if needed
@@ -92,6 +92,13 @@ class ServiceClientMixin(object):
                 headers - dict, contains the accepted method to call on handler
                 msg - dict, the body of the message to process
         """
+        if arguments is None:
+            arguments = {}
+        if headers is None:
+            headers = {}
+        if msg is None:
+            msg = {}
+        
         if not isinstance(headers, dict):
             headers = json.loads(headers)
         if not isinstance(msg, dict):
