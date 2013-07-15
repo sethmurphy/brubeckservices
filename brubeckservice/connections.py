@@ -337,8 +337,13 @@ class ServiceClientConnection(ServiceConnection):
             t(service_req.path),
             t(service_req.method),
         )
-        arguments = to_bytes(json.dumps(service_req.arguments))
-        headers = to_bytes(json.dumps(service_req.headers))
+        
+        sender, conn_id, request_timestamp, msg_passphrase, 
+            origin_sender_id, origin_conn_id, origin_out_addr, handle_response, 
+            path, method, rest
+        
+        arguments = '{}' if service_req.arguments is None else to_bytes(json.dumps(service_req.arguments))
+        headers = '{}' if service_req.arguments is None else to_bytes(json.dumps(service_req.headers))
         body = to_bytes(json.dumps(service_req.body))
 
         msg = '%s %s%s%s' % (header, t(arguments),t(headers), t(body))

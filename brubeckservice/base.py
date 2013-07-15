@@ -109,6 +109,7 @@ class ServiceClientMixin(object):
             "path": path,
             "method": method,
             "arguments": arguments,
+            "headers": headers,
             # a dict, right now only METHOD is required and must be one of:
             # ['get', 'post', 'put', 
             # 'delete','options', 'connect', 
