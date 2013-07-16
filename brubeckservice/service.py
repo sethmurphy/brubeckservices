@@ -219,7 +219,7 @@ def service_response_listener(application, service_id, service_addr, service_res
         while is_resource_registered(key) and loop == True:
             logging.debug("service_response_listener waiting")
             raw_response = service_conn.recv()
-            logging.debug("service_response_listener recv(): %s" % raw_response)
+            logging.debug("service_response_listener recv(): %s ... " % raw_response[:20])
             # just send raw message to connection client
             if raw_response is None:
                 loop = False

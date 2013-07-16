@@ -170,7 +170,7 @@ class ServiceConnection(Mongrel2Connection):
             t(body),
         )
         
-        logging.debug("ServiceConnection send (%s:%s) : \"%s\"" % (self.out_addr, service_response.sender, msg))
+        logging.debug("ServiceConnection send (%s:%s) : \"%s ...\"" % (self.out_addr, service_response.sender, msg[:20]))
 
         self.out_sock.send(service_response.sender, self.zmq.SNDMORE)
         self.out_sock.send("", self.zmq.SNDMORE)
@@ -312,8 +312,8 @@ class ServiceClientConnection(ServiceConnection):
             handler.set_status(service_response.status_code,  service_response.status_msg)
             result = handler()
             logging.debug(
-                "service_client_process_message service_response: %s" % service_response)
-            logging.debug("service_client_process_message result: %s" % result)
+                "service_client_process_message service_response: %s ..." % service_response[:20])
+            logging.debug("service_client_process_message result: %s ..." % result[:20])
             return (service_response, result)
     
         return (service_response, None)
@@ -432,7 +432,7 @@ def register_service(application,
     logging.debug("service_registration waiting for response");
     raw_registration_response = service_registration_sock.recv()    
     service_registration_sock.close()
-    logging.debug("_service_registration recv(): %s" % raw_registration_response)
+    logging.debug("_service_registration recv(): %s ..." % raw_registration_response[:20])
 
     fields = (sndr_id, svc_registration_passphrase, svc_client_heartbeat_addr) = (
         raw_registration_response.split(' ', 2))
