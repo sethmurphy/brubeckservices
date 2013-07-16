@@ -10,10 +10,10 @@ def t_parse(field_text):
             and data is the text to get the first n chars from
         returns the a tuple containing the value and whatever remains
     """
-    logging.debug("t_parse: %s" % field_text)
+    #logging.debug("t_parse: %s" % field_text)
     field_data = field_text.split(':', 1)
     expected_len = int(field_data[0])
-    logging.debug("expected_len: %s" % expected_len)
+    #logging.debug("expected_len: %s" % expected_len)
     if expected_len > 0:
         field_value = field_data[1]
         value = field_value[0:expected_len]

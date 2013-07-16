@@ -259,18 +259,18 @@ def parse_service_request(msg, passphrase):
     # last is group of tnetstrings, will handle after
     i=1
     for field in fields[1:-1]:
-        logging.debug('i: %s' % i)
+        #logging.debug('i: %s' % i)
         fields[i] = t_parse(field)[0]
         i+=1
     # our minimal "security" 
     if fields[3] != passphrase:
         raise Exception('Unknown service identity! (%s != %s)' % (str(fields[3]),str(passphrase)))
     # handle the "body" of the message or last parsed field
-    logging.debug('arguments:')
+    #logging.debug('arguments:')
     arguments, rest = t_parse(rest)
-    logging.debug('headers:')
+    #logging.debug('headers:')
     headers, rest = t_parse(rest)
-    logging.debug('body:')
+    #logging.debug('body:')
     body = t_parse(rest)[0]
     arguments = json.loads(arguments) if len(arguments) > 0 else {}
     headers = json.loads(headers) if len(headers) > 0 else {}

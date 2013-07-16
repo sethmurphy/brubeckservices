@@ -48,11 +48,11 @@ from brubeckservice.coro import (
     coro_spawn,
 )
 
-_DEFAULT_SERVICE_CLIENT_TIMEOUT = 5 # seconds before service is reregistered    
-_DEFAULT_SERVICE_TIMEOUT = 5 # seconds before service is unregistered on client
+_DEFAULT_SERVICE_CLIENT_TIMEOUT = 360 # seconds before service is reregistered    
+_DEFAULT_SERVICE_TIMEOUT = 360 # seconds before service is unregistered on client
 
 _ALLOWED_MISSED_HEARTBEATS = 1 # missed heartbeats before listener killed
-DEFAULT_HEARTBEAT_INTERVAL = 3 # time in seconds between heartbeats
+DEFAULT_HEARTBEAT_INTERVAL = 360 # time in seconds between heartbeats
 
 class ServiceConnection(Mongrel2Connection):
     """Class is specific to handling communication with a ServiceClientConnection.
@@ -325,7 +325,7 @@ class ServiceClientConnection(ServiceConnection):
             return None
             
         service_req.conn_id = uuid4().hex
-        logging.debug("service_req._data: %s" % service_req._data)
+        #logging.debug("service_req._data: %s" % service_req._data)
         header = "%s %s %s %s %s %s %s %s %s %s" % (self.sender_id, 
             t(service_req.conn_id), 
             t(service_req.request_timestamp),
@@ -343,7 +343,7 @@ class ServiceClientConnection(ServiceConnection):
 
         msg = '%s %s%s%s' % (header, t(arguments),t(headers), t(body))
         logging.debug(
-            "ServiceClientConnection send (%s:%s:%s): %s" % (self.out_addr, self.sender_id, service_req.conn_id, msg)
+            "ServiceClientConnection send (%s:%s:%s): %s ..." % (self.out_addr, self.sender_id, service_req.conn_id, msg[0:20])
         )
         self.out_sock.send(to_bytes(msg))
 
