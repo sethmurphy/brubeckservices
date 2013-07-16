@@ -325,7 +325,7 @@ class ServiceClientConnection(ServiceConnection):
             return None
             
         service_req.conn_id = uuid4().hex
-
+        logging.debug("service_req._data: %s" % service_req._data)
         header = "%s %s %s %s %s %s %s %s %s %s" % (self.sender_id, 
             t(service_req.conn_id), 
             t(service_req.request_timestamp),
