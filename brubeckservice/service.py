@@ -128,16 +128,16 @@ def _register_service(application,
         # (application.msg_conn.sender_id))
 
         # Start our listener to receive service responses
-        coro_spawn(
-            service_response_listener,
-            application,
-            'registration_listener',
-            service_id, 
-            service_addr, 
-            service_resp_addr, 
-            service_conn, 
-            service_passphrase
-        )
+        # coro_spawn(
+        #    service_response_listener,
+        #    application,
+        #    'registration_listener',
+        #    service_id, 
+        #    service_addr, 
+        #    service_resp_addr, 
+        #    service_conn, 
+        #    service_passphrase
+        #)
 
         service_conn.reconnect(service_conn.sender_id)
         logging.debug("register_service ignored: %s already registered" % service_id)

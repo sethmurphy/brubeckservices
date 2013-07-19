@@ -48,11 +48,11 @@ from brubeckservice.coro import (
     coro_spawn,
 )
 
-_DEFAULT_SERVICE_CLIENT_TIMEOUT = 360 # seconds before service is reregistered    
-_DEFAULT_SERVICE_TIMEOUT = 360 # seconds before service is unregistered on client
+_DEFAULT_SERVICE_CLIENT_TIMEOUT = 5 # seconds before service is reregistered    
+_DEFAULT_SERVICE_TIMEOUT = 5 # seconds before service is unregistered on client
 
 _ALLOWED_MISSED_HEARTBEATS = 1 # missed heartbeats before listener killed
-DEFAULT_HEARTBEAT_INTERVAL = 360 # time in seconds between heartbeats
+DEFAULT_HEARTBEAT_INTERVAL = 3 # time in seconds between heartbeats
 
 class ServiceConnection(Mongrel2Connection):
     """Class is specific to handling communication with a ServiceClientConnection.
@@ -106,6 +106,7 @@ class ServiceConnection(Mongrel2Connection):
 
         service_request = parse_service_request(message, application.msg_conn.passphrase)
         if service_request is None:
+            logging.debug('empty service message doing nothing')
             return
             
         handler = application.route_message(service_request)
@@ -170,7 +171,7 @@ class ServiceConnection(Mongrel2Connection):
             t(body),
         )
         
-        logging.debug("ServiceConnection send (%s:%s) : \"%s ...\"" % (self.out_addr, service_response.sender, msg[:20]))
+        logging.debug("ServiceConnection send (%s:%s)" % (self.out_addr, service_response.sender))
 
         self.out_sock.send(service_response.sender, self.zmq.SNDMORE)
         self.out_sock.send("", self.zmq.SNDMORE)
@@ -311,9 +312,9 @@ class ServiceClientConnection(ServiceConnection):
             
             handler.set_status(service_response.status_code,  service_response.status_msg)
             result = handler()
-            logging.debug(
-                "service_client_process_message service_response: %s ..." % service_response[:20])
-            logging.debug("service_client_process_message result: %s ..." % result[:20])
+            # logging.debug(
+            #    "service_client_process_message service_response: %s ..." % service_response[:20])
+            # logging.debug("service_client_process_message result: %s ..." % result[:20])
             return (service_response, result)
     
         return (service_response, None)
@@ -432,7 +433,7 @@ def register_service(application,
     logging.debug("service_registration waiting for response");
     raw_registration_response = service_registration_sock.recv()    
     service_registration_sock.close()
-    logging.debug("_service_registration recv(): %s ..." % raw_registration_response[:20])
+    # logging.debug("_service_registration recv(): %s ..." % raw_registration_response[:20])
 
     fields = (sndr_id, svc_registration_passphrase, svc_client_heartbeat_addr) = (
         raw_registration_response.split(' ', 2))
@@ -781,7 +782,7 @@ class ServiceHeartbeatConnection(HeartbeatConnection):
 
     def beat_forever(self, application):
         """our heartbeat"""
-        def the_beat_is_on(application):
+        def the_service_heartbeat_is_on(application):
             logging.debug("SERVICE beat is on")
             while self.alive:
                 msg = "%s %s %s %s" % (self.sender_id, t(self.service_passphrase), t(self.service_id), t(self.service_heartbeat_addr))
@@ -793,8 +794,8 @@ class ServiceHeartbeatConnection(HeartbeatConnection):
                 logging.debug("service PING DOWN self.alive check failed(%s:%s)" % (self.out_addr, self.sender_id))
             self.out_sock.close()
             
-        logging.debug("SERVICE beat_forever spawning the_beat_is_on")
-        coro_spawn(the_beat_is_on, application, 'service_heartbeat')
+        logging.debug("SERVICE beat_forever spawning the_service_heartbeat_is_on")
+        coro_spawn(the_service_heartbeat_is_on, application, 'service_heartbeat')
 
 
 class ClientHeartbeatConnection(HeartbeatConnection):
@@ -864,7 +865,7 @@ class ClientHeartbeatConnection(HeartbeatConnection):
 
     def beat_forever(self, application):
         """our heartbeat"""
-        def the_beat_is_on(application):
+        def the_client_hearbeat_is_on(application):
             logging.debug("CLIENT beat is on")
             while self.alive:
                 msg = "%s %s %s %s" % (self.sender_id, t(self.service_passphrase), t(self.service_id), t(self.service_heartbeat_addr))
@@ -875,4 +876,4 @@ class ClientHeartbeatConnection(HeartbeatConnection):
                 logging.debug("client PING DOWN self.alive check failed(%s:%s)" % (self.out_addr, self.sender_id))
 
         logging.debug("CLIENT beat_forever spawning the_beat_is_on")
-        coro_spawn(the_beat_is_on, application, 'client_heartbeat')
+        coro_spawn(the_client_hearbeat_is_on, application, 'client_heartbeat')
